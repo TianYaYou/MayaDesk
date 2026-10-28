@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     google_sub TEXT UNIQUE,            -- Google OAuth2 Subject Identifier
     avatar_url TEXT,
     role TEXT NOT NULL DEFAULT 'member', -- 'admin', 'member', 'guest'
-    quota_bytes INTEGER NOT NULL DEFAULT 107374182400, -- Default 100GB private quota
+    quota_bytes INTEGER NOT NULL DEFAULT 0, -- Default 0 (no quota for regular users until assigned by admin)
     used_bytes INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -59,3 +59,21 @@ CREATE TABLE IF NOT EXISTS vfs_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_vfs_blake3 ON vfs_nodes(blake3_hash);
 CREATE INDEX IF NOT EXISTS idx_vfs_parent ON vfs_nodes(pool_id, parent_id);
+
+-- 5. Transfer Logs Table (Audit & History of Uploads and Downloads)
+CREATE TABLE IF NOT EXISTS transfer_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    user_email TEXT NOT NULL,
+    action TEXT NOT NULL,              -- 'upload' | 'download'
+    file_name TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    channel TEXT NOT NULL DEFAULT 'relay', -- 'p2p' | 'relay'
+    status TEXT NOT NULL DEFAULT 'success', -- 'success' | 'failed'
+    error_msg TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_transfers_user ON transfer_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_transfers_created ON transfer_logs(created_at);

@@ -3,6 +3,8 @@ export interface UserProfile {
   email: string;
   display_name: string;
   role: string;
+  quota_bytes?: number;
+  used_bytes?: number;
 }
 
 export interface AuthTokenResponse {
@@ -40,6 +42,30 @@ export interface StoragePoolConfig {
   mount_path: string;
   quota_gb: number;
   read_only: boolean;
+}
+
+export interface UserRecord {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  quota_bytes: number;
+  used_bytes: number;
+  created_at: string;
+}
+
+export interface TransferLogRecord {
+  id: string;
+  user_id: string;
+  user_email: string;
+  action: 'upload' | 'download';
+  file_name: string;
+  rel_path: string;
+  size_bytes: number;
+  channel: string;
+  status: string;
+  error_msg?: string | null;
+  created_at: string;
 }
 
 export interface FullAppConfig {
@@ -130,6 +156,59 @@ export async function apiGetGoogleAuthUrl(): Promise<{ authorize_url: string; en
   return res.json();
 }
 
+export async function apiGetUserProfile(token?: string | null): Promise<UserProfile> {
+  const res = await fetch(`${API_BASE}/user/profile`, {
+    headers: getAuthHeaders(token),
+  });
+  if (!res.ok) throw new Error('无法读取用户信息');
+  return res.json();
+}
+
+export async function apiListAdminUsers(token?: string | null): Promise<UserRecord[]> {
+  const res = await fetch(`${API_BASE}/admin/users`, {
+    headers: getAuthHeaders(token),
+  });
+  if (!res.ok) throw new Error('无法读取用户列表');
+  const data = await res.json();
+  return data.users || [];
+}
+
+export async function apiUpdateUserQuota(
+  userId: string,
+  quotaBytes: number,
+  token?: string | null
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}/quota`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(token),
+    },
+    body: JSON.stringify({ quota_bytes: quotaBytes }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || '更新配额失败');
+  }
+}
+
+export async function apiInitDisk(
+  params: { mount_path: string; pool_type?: string; name?: string; quota_gb?: number },
+  token?: string | null
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/init-disk`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(token),
+    },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '初始化存储硬盘失败');
+  return data;
+}
+
 export async function apiListDisks(token?: string | null): Promise<DiskMountSummary[]> {
   const res = await fetch(`${API_BASE}/disks`, {
     headers: getAuthHeaders(token),
@@ -140,11 +219,11 @@ export async function apiListDisks(token?: string | null): Promise<DiskMountSumm
 }
 
 export async function apiListFiles(
-  poolId: string,
+  space: string,
   path: string,
   token?: string | null
 ): Promise<VfsFileEntry[]> {
-  const params = new URLSearchParams({ pool_id: poolId, path });
+  const params = new URLSearchParams({ space, path });
   const res = await fetch(`${API_BASE}/files?${params.toString()}`, {
     headers: getAuthHeaders(token),
   });
@@ -153,8 +232,21 @@ export async function apiListFiles(
   return data.entries || [];
 }
 
+export async function apiListFolderPaths(
+  space: string,
+  token?: string | null
+): Promise<string[]> {
+  const params = new URLSearchParams({ space });
+  const res = await fetch(`${API_BASE}/files/folders?${params.toString()}`, {
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!res.ok) return ['/'];
+  return data.folders || ['/'];
+}
+
 export async function apiCreateFolder(
-  poolId: string,
+  space: string,
   path: string,
   folderName: string,
   token?: string | null
@@ -165,7 +257,7 @@ export async function apiCreateFolder(
       'Content-Type': 'application/json',
       ...getAuthHeaders(token),
     },
-    body: JSON.stringify({ pool_id: poolId, path, folder_name: folderName }),
+    body: JSON.stringify({ space, path, folder_name: folderName }),
   });
   if (!res.ok) {
     const data = await res.json();
@@ -174,31 +266,90 @@ export async function apiCreateFolder(
 }
 
 export async function apiUploadFiles(
-  poolId: string,
+  space: string,
   path: string,
-  files: FileList,
-  token?: string | null
+  files: FileList | File[],
+  token?: string | null,
+  onProgress?: (percent: number, msg: string) => void
 ): Promise<void> {
-  const form = new FormData();
-  Array.from(files).forEach((f) => form.append('file', f));
-  const params = new URLSearchParams({ pool_id: poolId, path });
-  const res = await fetch(`${API_BASE}/files/upload?${params.toString()}`, {
-    method: 'POST',
-    headers: getAuthHeaders(token),
-    body: form,
-  });
-  if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || '上传失败');
+  const fileArray = Array.from(files);
+  const CHUNK_THRESHOLD = 8 * 1024 * 1024; // 8MB: files larger than this use chunked relay upload
+  const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB per chunk
+
+  for (let fIdx = 0; fIdx < fileArray.length; fIdx++) {
+    const file = fileArray[fIdx];
+    const relPath = file.webkitRelativePath || file.name;
+    const progressBase = Math.round((fIdx / fileArray.length) * 100);
+
+    if (file.size > CHUNK_THRESHOLD) {
+      // Large file: Chunked relay upload
+      const uploadId = `up_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+      for (let cIdx = 0; cIdx < totalChunks; cIdx++) {
+        const start = cIdx * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunkBlob = file.slice(start, end);
+
+        const form = new FormData();
+        form.append('upload_id', uploadId);
+        form.append('chunk_index', String(cIdx));
+        form.append('total_chunks', String(totalChunks));
+        form.append('file_name', file.name);
+        form.append('rel_path', relPath);
+        form.append('space', space);
+        form.append('path', path);
+        form.append('chunk', chunkBlob, file.name);
+
+        const chunkPercent = Math.round(((cIdx + 1) / totalChunks) * 100);
+        onProgress?.(
+          Math.min(99, progressBase + Math.round(chunkPercent / fileArray.length)),
+          `正在中继上传大文件 "${file.name}" [分片 ${cIdx + 1}/${totalChunks}]`
+        );
+
+        const res = await fetch(`${API_BASE}/files/upload/chunk`, {
+          method: 'POST',
+          headers: getAuthHeaders(token),
+          body: form,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `大文件分片 ${cIdx + 1} 上传失败`);
+        }
+      }
+    } else {
+      // Standard upload (single or multiple)
+      const form = new FormData();
+      form.append('file', file, relPath);
+      const params = new URLSearchParams({ space, path });
+      onProgress?.(
+        Math.min(99, progressBase + 10),
+        `正在上传 "${file.name}"...`
+      );
+
+      const res = await fetch(`${API_BASE}/files/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: getAuthHeaders(token),
+        body: form,
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || '上传失败');
+      }
+    }
   }
+
+  onProgress?.(100, '上传完成');
 }
 
 export async function apiDeleteEntry(
-  poolId: string,
+  space: string,
   path: string,
   token?: string | null
 ): Promise<void> {
-  const params = new URLSearchParams({ pool_id: poolId, path });
+  const params = new URLSearchParams({ space, path });
   const res = await fetch(`${API_BASE}/files?${params.toString()}`, {
     method: 'DELETE',
     headers: getAuthHeaders(token),
@@ -209,9 +360,18 @@ export async function apiDeleteEntry(
   }
 }
 
-export function getDownloadUrl(poolId: string, path: string): string {
-  const params = new URLSearchParams({ pool_id: poolId, path });
+export function getDownloadUrl(space: string, path: string): string {
+  const params = new URLSearchParams({ space, path });
   return `${API_BASE}/files/download?${params.toString()}`;
+}
+
+export async function apiGetTransferLogs(token?: string | null): Promise<TransferLogRecord[]> {
+  const res = await fetch(`${API_BASE}/transfers/logs`, {
+    headers: getAuthHeaders(token),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.logs || [];
 }
 
 export async function apiGetSystemConfig(token?: string | null): Promise<FullAppConfig> {

@@ -1,9 +1,12 @@
 use std::{
-    fs,
+    fs::{self, File},
+    io::{Cursor, Write},
     path::{Component, Path, PathBuf},
     time::UNIX_EPOCH,
 };
 use serde::{Deserialize, Serialize};
+use zip::{write::SimpleFileOptions, ZipWriter};
+
 use crate::config::{AppConfig, StoragePoolConfig};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -28,10 +31,10 @@ pub struct VfsFileEntry {
     pub blake3_short: Option<String>,
 }
 
-/// Resolves physical paths safely across multi-disk NAS mounts while preventing path traversal (`..`).
 pub struct StorageManager;
 
 impl StorageManager {
+    /// List all physical storage pool summaries (for admin view)
     pub fn list_mounts(config: &AppConfig, user_id: &str) -> Vec<DiskMountSummary> {
         config
             .storage
@@ -64,20 +67,48 @@ impl StorageManager {
         }
     }
 
-    pub fn resolve_safe_target(
-        config: &AppConfig,
-        pool_id: &str,
-        user_id: &str,
-        rel_path: &str,
-    ) -> anyhow::Result<(StoragePoolConfig, PathBuf)> {
-        let pool = config
+    /// Select best active storage pool for a given space ("private" or "shared") or pool_id
+    pub fn find_pool_for_space<'a>(
+        config: &'a AppConfig,
+        space_or_pool_id: &str,
+    ) -> anyhow::Result<&'a StoragePoolConfig> {
+        // First try matching exact pool id
+        if let Some(p) = config.storage.pools.iter().find(|p| p.id == space_or_pool_id) {
+            return Ok(p);
+        }
+
+        // Then match by pool_type (private | shared)
+        let normalized = if space_or_pool_id.starts_with("priv") {
+            "private"
+        } else if space_or_pool_id.starts_with("shar") {
+            "shared"
+        } else {
+            space_or_pool_id
+        };
+
+        config
             .storage
             .pools
             .iter()
-            .find(|p| p.id == pool_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("未找到存储池: {}", pool_id))?;
+            .find(|p| p.pool_type == normalized && !p.read_only)
+            .or_else(|| config.storage.pools.iter().find(|p| p.pool_type == normalized))
+            .or_else(|| config.storage.pools.first())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "尚未配置【{}】存储硬盘，请管理员在控制台中添加存储盘挂载路径",
+                    if normalized == "private" { "私人空间" } else { "共享空间" }
+                )
+            })
+    }
 
+    /// Resolve absolute filesystem path safely while preventing directory traversal (..)
+    pub fn resolve_safe_target(
+        config: &AppConfig,
+        space_or_pool_id: &str,
+        user_id: &str,
+        rel_path: &str,
+    ) -> anyhow::Result<(StoragePoolConfig, PathBuf)> {
+        let pool = Self::find_pool_for_space(config, space_or_pool_id)?.clone();
         let base = Self::resolve_pool_base_dir(&pool, user_id);
         fs::create_dir_all(&base)?;
 
@@ -93,11 +124,11 @@ impl StorageManager {
 
     pub fn list_directory(
         config: &AppConfig,
-        pool_id: &str,
+        space_or_pool_id: &str,
         user_id: &str,
         rel_path: &str,
     ) -> anyhow::Result<Vec<VfsFileEntry>> {
-        let (_pool, target_dir) = Self::resolve_safe_target(config, pool_id, user_id, rel_path)?;
+        let (_pool, target_dir) = Self::resolve_safe_target(config, space_or_pool_id, user_id, rel_path)?;
         if !target_dir.exists() {
             fs::create_dir_all(&target_dir)?;
         }
@@ -144,7 +175,99 @@ impl StorageManager {
         Ok(entries)
     }
 
-    fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
+    /// List all subfolder relative paths under a space for left sidebar path navigation
+    pub fn list_folder_paths(
+        config: &AppConfig,
+        space_or_pool_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let (_pool, base_dir) = Self::resolve_safe_target(config, space_or_pool_id, user_id, "/")?;
+        let mut paths = vec!["/".to_string()];
+        if base_dir.exists() {
+            Self::collect_subdirs_recursive(&base_dir, &base_dir, &mut paths, 3)?;
+        }
+        paths.sort();
+        Ok(paths)
+    }
+
+    fn collect_subdirs_recursive(
+        root: &Path,
+        current: &Path,
+        out: &mut Vec<String>,
+        max_depth: usize,
+    ) -> anyhow::Result<()> {
+        if max_depth == 0 {
+            return Ok(());
+        }
+        if let Ok(entries) = fs::read_dir(current) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if !name.starts_with('.') {
+                            if let Ok(rel) = entry.path().strip_prefix(root) {
+                                out.push(format!("/{}", rel.to_string_lossy()));
+                                let _ = Self::collect_subdirs_recursive(
+                                    root,
+                                    &entry.path(),
+                                    out,
+                                    max_depth - 1,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recursively compress a directory into an in-memory ZIP buffer
+    pub fn zip_directory(src_dir: &Path) -> anyhow::Result<Vec<u8>> {
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            Self::zip_walk(&mut zip, src_dir, Path::new(""))?;
+            zip.finish()?;
+        }
+        Ok(buffer.into_inner())
+    }
+
+    fn zip_walk<W: Write + std::io::Seek>(
+        zip: &mut ZipWriter<W>,
+        current_dir: &Path,
+        rel_prefix: &Path,
+    ) -> anyhow::Result<()> {
+        for entry in fs::read_dir(current_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.') {
+                continue;
+            }
+
+            let entry_rel = rel_prefix.join(&name);
+            let meta = entry.metadata()?;
+
+            if meta.is_dir() {
+                let options = SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated);
+                let dir_str = format!("{}/", entry_rel.to_string_lossy());
+                zip.add_directory(&dir_str, options)?;
+                Self::zip_walk(zip, &path, &entry_rel)?;
+            } else if meta.is_file() {
+                let options = SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated);
+                zip.start_file(entry_rel.to_string_lossy(), options)?;
+                let mut f = File::open(&path)?;
+                std::io::copy(&mut f, zip)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
         let mut total = 0;
         if path.is_dir() {
             for entry in fs::read_dir(path)? {

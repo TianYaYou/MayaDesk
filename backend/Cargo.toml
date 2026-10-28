@@ -35,3 +35,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Config & Environment
 toml = "0.8"
 dotenvy = "0.15"
+
+# Compression / Folder download
+zip = { version = "2.2", default-features = false, features = ["deflate"] }

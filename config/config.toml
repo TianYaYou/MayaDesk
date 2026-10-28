@@ -52,28 +52,7 @@ tunnel_token = ""
 fallback_https_enabled = true
 
 # ==============================================================================
-# 多盘 NAS 存储池配置 (支持任意数量的私人硬盘池与共享硬盘池，路径完全可自定义)
+# 多盘 NAS 存储池配置 (首次部署由管理员配置初始盘路径，无预设盘)
 # ==============================================================================
-[[storage.pools]]
-id = "private-main"
-name = "私人主硬盘 (NVMe)"
-pool_type = "private"         # "private" (按用户 UID 自动隔离目录) | "shared" (多用户共享盘)
-mount_path = "./data/storage/private_nvme"
-quota_gb = 1024
-read_only = false
-
-[[storage.pools]]
-id = "shared-nas-disk1"
-name = "共享盘 01 · 团队资料库"
-pool_type = "shared"
-mount_path = "./data/storage/shared_disk1"
-quota_gb = 4096
-read_only = false
-
-[[storage.pools]]
-id = "shared-nas-disk2"
-name = "共享盘 02 · 媒体与归档阵列"
-pool_type = "shared"
-mount_path = "./data/storage/shared_disk2"
-quota_gb = 8192
-read_only = false
+[storage]
+pools = []

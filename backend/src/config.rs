@@ -215,32 +215,7 @@ impl AppConfig {
                 },
             },
             storage: StorageSection {
-                pools: vec![
-                    StoragePoolConfig {
-                        id: "private-main".into(),
-                        name: "私人主硬盘 (NVMe)".into(),
-                        pool_type: "private".into(),
-                        mount_path: "./data/storage/private_nvme".into(),
-                        quota_gb: 1024,
-                        read_only: false,
-                    },
-                    StoragePoolConfig {
-                        id: "shared-nas-disk1".into(),
-                        name: "共享盘 01 · 团队资料库".into(),
-                        pool_type: "shared".into(),
-                        mount_path: "./data/storage/shared_disk1".into(),
-                        quota_gb: 4096,
-                        read_only: false,
-                    },
-                    StoragePoolConfig {
-                        id: "shared-nas-disk2".into(),
-                        name: "共享盘 02 · 媒体与归档阵列".into(),
-                        pool_type: "shared".into(),
-                        mount_path: "./data/storage/shared_disk2".into(),
-                        quota_gb: 8192,
-                        read_only: false,
-                    },
-                ],
+                pools: vec![],
             },
             config_file_path: "./config/config.toml".into(),
         }
