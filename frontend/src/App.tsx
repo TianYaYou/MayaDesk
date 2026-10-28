@@ -11,6 +11,9 @@ import {
   apiUploadFiles,
   apiDeleteEntry,
   getDownloadUrl,
+  getPreviewUrl,
+  apiExtractArchive,
+  getFileCategory,
   apiListAdminUsers,
   apiUpdateUserQuota,
   apiGetTransferLogs,
@@ -157,6 +160,96 @@ export default function App() {
       setStatusMessage(`已创建服务器目录: ${res.path}`);
     } catch (err: any) {
       setFsError(err?.message || '创建目录失败');
+    }
+  };
+
+  // File Preview State (Code, PDF, Image, Video, Audio)
+  const [previewItem, setPreviewItem] = createSignal<VfsFileEntry | null>(null);
+  const [previewCategory, setPreviewCategory] = createSignal<'image' | 'video' | 'audio' | 'pdf' | 'code' | 'archive' | 'other'>('other');
+  const [previewContent, setPreviewContent] = createSignal<string>('');
+  const [previewLoading, setPreviewLoading] = createSignal(false);
+  const [previewWrap, setPreviewWrap] = createSignal(true);
+  const [copySuccess, setCopySuccess] = createSignal(false);
+
+  // Remote Archive Extraction State
+  const [extractItem, setExtractItem] = createSignal<VfsFileEntry | null>(null);
+  const [extractDestOption, setExtractDestOption] = createSignal<'folder' | 'current' | 'custom'>('folder');
+  const [extractCustomPath, setExtractCustomPath] = createSignal('');
+  const [extractLoading, setExtractLoading] = createSignal(false);
+
+  const openPreview = async (item: VfsFileEntry) => {
+    if (item.is_dir) return;
+    const cat = getFileCategory(item.name);
+    setPreviewItem(item);
+    setPreviewCategory(cat);
+    setPreviewContent('');
+    setCopySuccess(false);
+
+    if (cat === 'code') {
+      setPreviewLoading(true);
+      try {
+        const url = getPreviewUrl(activeSpace(), item.rel_path, token());
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('无法读取文件内容');
+        const text = await res.text();
+        setPreviewContent(text);
+      } catch (err: any) {
+        setPreviewContent(`读取文件失败: ${err?.message || '网络错误'}`);
+      } finally {
+        setPreviewLoading(false);
+      }
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewItem(null);
+    setPreviewContent('');
+  };
+
+  const copyCodeContent = async () => {
+    if (!previewContent()) return;
+    try {
+      await navigator.clipboard.writeText(previewContent());
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      // fallback
+    }
+  };
+
+  const openExtractModal = (item: VfsFileEntry) => {
+    setExtractItem(item);
+    setExtractDestOption('folder');
+    const baseName = item.name.replace(/\.(tar\.gz|tgz|zip|tar|gz)$/i, '');
+    const parentDir = currentPath() === '/' ? '' : currentPath();
+    setExtractCustomPath(`${parentDir}/${baseName}`);
+  };
+
+  const handleExecuteExtract = async () => {
+    const item = extractItem();
+    if (!item) return;
+
+    let targetDest = currentPath();
+    if (extractDestOption() === 'folder') {
+      const baseName = item.name.replace(/\.(tar\.gz|tgz|zip|tar|gz)$/i, '');
+      const parentDir = currentPath() === '/' ? '' : currentPath();
+      targetDest = `${parentDir}/${baseName}`;
+    } else if (extractDestOption() === 'custom') {
+      targetDest = extractCustomPath().trim() || currentPath();
+    }
+
+    setExtractLoading(true);
+    try {
+      const res = await apiExtractArchive(activeSpace(), item.rel_path, targetDest, token());
+      setExtractItem(null);
+      setStatusMessage(`解压成功！共提取 ${res.file_count} 个文件 (${formatBytes(res.extracted_bytes)}) 至 ${res.dest_path}`);
+      await refreshDirectory();
+      await refreshFolderTree();
+      await refreshUserProfile();
+    } catch (err: any) {
+      setStatusMessage(`解压失败: ${err?.message || '操作错误'}`);
+    } finally {
+      setExtractLoading(false);
     }
   };
 
@@ -976,12 +1069,35 @@ export default function App() {
                           class="sm:shrink-0 flex items-center justify-between sm:justify-start gap-2 min-w-0 pr-2"
                         >
                           <div class="flex items-center gap-2 min-w-0">
-                            <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0">
-                              {item.is_dir ? 'DIR' : 'FILE'}
+                            <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0 font-semibold">
+                              {item.is_dir ? 'DIR' : (() => {
+                                const cat = getFileCategory(item.name);
+                                switch (cat) {
+                                  case 'image': return 'IMG';
+                                  case 'video': return 'VID';
+                                  case 'audio': return 'AUD';
+                                  case 'pdf': return 'PDF';
+                                  case 'code': return 'CODE';
+                                  case 'archive': return 'ZIP';
+                                  default: return 'FILE';
+                                }
+                              })()}
                             </span>
                             <Show
                               when={item.is_dir}
-                              fallback={<span class="font-medium truncate">{item.name}</span>}
+                              fallback={
+                                getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other' ? (
+                                  <button
+                                    onClick={() => openPreview(item)}
+                                    class="text-left hover:underline hover:text-sky-800 cursor-pointer font-medium truncate"
+                                    title="点击在线预览"
+                                  >
+                                    {item.name}
+                                  </button>
+                                ) : (
+                                  <span class="font-medium truncate">{item.name}</span>
+                                )
+                              }
                             >
                               <button
                                 onClick={() => setCurrentPath(item.rel_path)}
@@ -994,6 +1110,22 @@ export default function App() {
 
                           {/* Mobile Action Buttons */}
                           <div class="flex sm:hidden items-center gap-1.5 shrink-0">
+                            <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
+                              <button
+                                onClick={() => openPreview(item)}
+                                class="px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
+                              >
+                                预览
+                              </button>
+                            </Show>
+                            <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
+                              <button
+                                onClick={() => openExtractModal(item)}
+                                class="px-2 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer"
+                              >
+                                解压
+                              </button>
+                            </Show>
                             <a
                               href={getDownloadUrl(activeSpace(), item.rel_path)}
                               target="_blank"
@@ -1030,6 +1162,28 @@ export default function App() {
                           {formatTime(item.modified_unix)}
                         </div>
                         <div class="hidden sm:flex flex-1 justify-end gap-1.5 px-2">
+                          {/* Online Preview Button */}
+                          <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
+                            <button
+                              onClick={() => openPreview(item)}
+                              class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0"
+                              title="在线预览"
+                            >
+                              预览
+                            </button>
+                          </Show>
+
+                          {/* Remote Extract Button */}
+                          <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
+                            <button
+                              onClick={() => openExtractModal(item)}
+                              class="px-1.5 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer shrink-0"
+                              title="远程解压压缩包"
+                            >
+                              解压
+                            </button>
+                          </Show>
+
                           {/* Requirement 2: Directory downloads as ZIP, File downloads directly */}
                           <a
                             href={getDownloadUrl(activeSpace(), item.rel_path)}
@@ -1684,6 +1838,253 @@ export default function App() {
                   class="px-4 py-1.5 border-2 border-black bg-sky-200 hover:bg-sky-300 font-bold text-xs cursor-pointer"
                 >
                   选取此路径作为物理存储盘: {fsCurrentPath()}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* File Preview Modal (Code, PDF, Image, Video, Audio) */}
+      <Show when={previewItem()}>
+        <div class="fixed inset-0 bg-black/60 flex items-center justify-center p-3 sm:p-6 z-[70]">
+          <div class="w-full max-w-4xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[92vh] space-y-3 shadow-2xl">
+            {/* Header */}
+            <div class="flex items-center justify-between border-b border-black pb-2">
+              <div class="flex items-center gap-2 min-w-0 pr-3">
+                <span class="px-1.5 py-0.5 border border-black bg-sky-100 font-mono text-[11px] font-bold shrink-0">
+                  {previewCategory().toUpperCase()}
+                </span>
+                <span class="font-bold text-sm truncate font-mono">{previewItem()!.name}</span>
+                <span class="text-xs text-neutral-500 shrink-0 font-mono">
+                  ({formatBytes(previewItem()!.size_bytes)})
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <a
+                  href={getDownloadUrl(activeSpace(), previewItem()!.rel_path)}
+                  target="_blank"
+                  class="px-2 py-1 border border-black bg-sky-50 hover:bg-sky-100 text-xs font-semibold cursor-pointer"
+                >
+                  下载
+                </a>
+                <a
+                  href={getPreviewUrl(activeSpace(), previewItem()!.rel_path, token())}
+                  target="_blank"
+                  class="px-2 py-1 border border-black bg-sky-50 hover:bg-sky-100 text-xs font-semibold cursor-pointer"
+                >
+                  新标签打开
+                </a>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer font-bold ml-1"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+
+            {/* Preview Body according to Category */}
+            <div class="flex-1 overflow-auto flex flex-col items-center justify-center min-h-[250px]">
+              {/* 1. Image Preview */}
+              <Show when={previewCategory() === 'image'}>
+                <div class="max-h-[75vh] w-full flex items-center justify-center p-2 bg-neutral-100 border border-neutral-300">
+                  <img
+                    src={getPreviewUrl(activeSpace(), previewItem()!.rel_path, token())}
+                    alt={previewItem()!.name}
+                    class="max-h-[70vh] max-w-full object-contain shadow-sm"
+                  />
+                </div>
+              </Show>
+
+              {/* 2. Video Preview */}
+              <Show when={previewCategory() === 'video'}>
+                <div class="w-full flex flex-col items-center justify-center bg-black border border-black p-1">
+                  <video
+                    src={getPreviewUrl(activeSpace(), previewItem()!.rel_path, token())}
+                    controls
+                    autoplay
+                    class="max-h-[70vh] max-w-full"
+                  />
+                </div>
+              </Show>
+
+              {/* 3. Audio Preview */}
+              <Show when={previewCategory() === 'audio'}>
+                <div class="w-full max-w-lg p-6 border border-black bg-sky-50 text-center space-y-4 my-auto">
+                  <div class="font-bold text-sm">{previewItem()!.name}</div>
+                  <audio
+                    src={getPreviewUrl(activeSpace(), previewItem()!.rel_path, token())}
+                    controls
+                    autoplay
+                    class="w-full"
+                  />
+                </div>
+              </Show>
+
+              {/* 4. PDF Preview */}
+              <Show when={previewCategory() === 'pdf'}>
+                <div class="w-full h-[75vh] border border-black bg-neutral-50">
+                  <iframe
+                    src={getPreviewUrl(activeSpace(), previewItem()!.rel_path, token())}
+                    class="w-full h-full border-0"
+                    title={previewItem()!.name}
+                  />
+                </div>
+              </Show>
+
+              {/* 5. Code & Text Preview */}
+              <Show when={previewCategory() === 'code'}>
+                <div class="w-full flex-1 flex flex-col min-h-[350px] max-h-[75vh] border border-black bg-white">
+                  {/* Code Toolbar */}
+                  <div class="flex items-center justify-between px-3 py-1.5 bg-neutral-100 border-b border-black text-xs">
+                    <span class="font-mono text-neutral-600">
+                      {previewContent() ? `${previewContent().split('\n').length} 行` : '加载中...'}
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewWrap(!previewWrap())}
+                        class="px-2 py-0.5 border border-black bg-white hover:bg-neutral-50 text-[11px] cursor-pointer"
+                      >
+                        {previewWrap() ? '不自动换行' : '自动换行'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={copyCodeContent}
+                        class="px-2 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] font-semibold cursor-pointer"
+                      >
+                        {copySuccess() ? '已复制！' : '复制全部'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Code Display with Line Numbers */}
+                  <Show
+                    when={!previewLoading()}
+                    fallback={<div class="p-8 text-center text-xs text-neutral-500 font-mono">正在加载代码内容...</div>}
+                  >
+                    <div class="flex-1 overflow-auto flex font-mono text-xs bg-white">
+                      {/* Line Numbers */}
+                      <div class="select-none py-3 px-2 bg-neutral-50 text-neutral-400 text-right border-r border-neutral-200 shrink-0 font-mono leading-relaxed">
+                        <For each={previewContent().split('\n')}>
+                          {(_, idx) => <div>{idx() + 1}</div>}
+                        </For>
+                      </div>
+                      {/* Code Content */}
+                      <pre
+                        class={`p-3 font-mono leading-relaxed text-black flex-1 focus:outline-none ${
+                          previewWrap() ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'
+                        }`}
+                      >
+                        {previewContent()}
+                      </pre>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Archive Extract Modal */}
+      <Show when={extractItem()}>
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+          <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-black pb-2">
+              <h3 class="font-bold text-sm">远程解压压缩包</h3>
+              <button
+                type="button"
+                onClick={() => setExtractItem(null)}
+                class="px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+              <div class="p-2 border border-black bg-sky-50 font-mono">
+                <span class="text-neutral-500 block text-[11px]">压缩包文件:</span>
+                <span class="font-bold">{extractItem()!.name}</span>
+                <span class="text-neutral-500 text-[11px] block mt-0.5">
+                  大小: {formatBytes(extractItem()!.size_bytes)} | 路径: {extractItem()!.rel_path}
+                </span>
+              </div>
+
+              <div class="space-y-2">
+                <span class="font-semibold block">解压目标位置:</span>
+
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                  <input
+                    type="radio"
+                    name="extract_option"
+                    checked={extractDestOption() === 'folder'}
+                    onChange={() => setExtractDestOption('folder')}
+                    class="mt-0.5"
+                  />
+                  <div>
+                    <span class="font-bold block">解压到同名子文件夹 (推荐)</span>
+                    <span class="text-[11px] text-neutral-500 font-mono">
+                      {currentPath() === '/' ? '' : currentPath()}/
+                      {extractItem()!.name.replace(/\.(tar\.gz|tgz|zip|tar|gz)$/i, '')}/
+                    </span>
+                  </div>
+                </label>
+
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                  <input
+                    type="radio"
+                    name="extract_option"
+                    checked={extractDestOption() === 'current'}
+                    onChange={() => setExtractDestOption('current')}
+                    class="mt-0.5"
+                  />
+                  <div>
+                    <span class="font-bold block">解压到当前目录</span>
+                    <span class="text-[11px] text-neutral-500 font-mono">{currentPath()}</span>
+                  </div>
+                </label>
+
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                  <input
+                    type="radio"
+                    name="extract_option"
+                    checked={extractDestOption() === 'custom'}
+                    onChange={() => setExtractDestOption('custom')}
+                    class="mt-0.5"
+                  />
+                  <div class="flex-1 min-w-0">
+                    <span class="font-bold block">自定义解压路径:</span>
+                    <input
+                      type="text"
+                      value={extractCustomPath()}
+                      onInput={(e) => {
+                        setExtractCustomPath(e.currentTarget.value);
+                        setExtractDestOption('custom');
+                      }}
+                      class="w-full px-2 py-1 border border-black font-mono text-xs bg-white mt-1"
+                    />
+                  </div>
+                </label>
+              </div>
+
+              <div class="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200">
+                <button
+                  type="button"
+                  onClick={() => setExtractItem(null)}
+                  class="px-3 py-1.5 border border-black bg-white hover:bg-neutral-100 cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={extractLoading()}
+                  onClick={handleExecuteExtract}
+                  class="px-4 py-1.5 border-2 border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer disabled:opacity-50"
+                >
+                  {extractLoading() ? '正在解压中...' : '开始解压'}
                 </button>
               </div>
             </div>

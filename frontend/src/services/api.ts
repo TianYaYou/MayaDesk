@@ -365,6 +365,71 @@ export function getDownloadUrl(space: string, path: string): string {
   return `${API_BASE}/files/download?${params.toString()}`;
 }
 
+export function getPreviewUrl(space: string, path: string, token?: string | null): string {
+  const params = new URLSearchParams({ space, path, inline: 'true' });
+  if (token) {
+    params.set('token', token);
+  }
+  return `${API_BASE}/files/download?${params.toString()}`;
+}
+
+export async function apiExtractArchive(
+  space: string,
+  path: string,
+  destPath?: string,
+  token?: string | null
+): Promise<{ status: string; file_name: string; dest_path: string; extracted_bytes: number; file_count: number }> {
+  const res = await fetch(`${API_BASE}/files/extract`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(token),
+    },
+    body: JSON.stringify({
+      space,
+      path,
+      dest_path: destPath,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '解压失败');
+  }
+  return res.json();
+}
+
+export function getFileCategory(filename: string): 'image' | 'video' | 'audio' | 'pdf' | 'code' | 'archive' | 'other' {
+  const lower = filename.toLowerCase();
+  const ext = lower.split('.').pop() || '';
+
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+    return 'image';
+  }
+  if (['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext)) {
+    return 'video';
+  }
+  if (['mp3', 'wav', 'flac', 'aac', 'm4a'].includes(ext)) {
+    return 'audio';
+  }
+  if (ext === 'pdf') {
+    return 'pdf';
+  }
+  if (
+    [
+      'txt', 'md', 'markdown', 'json', 'js', 'ts', 'tsx', 'jsx', 'rs', 'py', 'go',
+      'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'html', 'css', 'scss', 'sql', 'sh',
+      'bash', 'zsh', 'yaml', 'yml', 'toml', 'xml', 'log', 'env', 'ini', 'conf',
+      'cfg', 'csv', 'diff', 'patch', 'vue', 'svelte', 'proto'
+    ].includes(ext)
+  ) {
+    return 'code';
+  }
+  if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz') || ['zip', 'tar', 'gz'].includes(ext)) {
+    return 'archive';
+  }
+  return 'other';
+}
+
 export async function apiGetTransferLogs(token?: string | null): Promise<TransferLogRecord[]> {
   const res = await fetch(`${API_BASE}/transfers/logs`, {
     headers: getAuthHeaders(token),

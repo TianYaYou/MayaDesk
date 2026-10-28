@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -42,6 +42,21 @@ pub struct FileQuery {
     pub pool_id: Option<String>,
     #[serde(default)]
     pub path: String,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub inline: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct ExtractRequest {
+    #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub pool_id: Option<String>,
+    pub path: String,
+    #[serde(default)]
+    pub dest_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +147,7 @@ pub async fn create_router(state: Arc<AppState>) -> Router {
         .route("/files/upload", post(upload_file_handler))
         .route("/files/upload/chunk", post(upload_chunk_handler))
         .route("/files/download", get(download_file_handler))
+        .route("/files/extract", post(extract_file_handler))
         .route("/files", delete(delete_file_handler))
         // Transfer Audit Logs
         .route("/transfers/logs", get(get_transfer_logs_handler))
@@ -168,11 +184,20 @@ fn resolve_space(q_space: &Option<String>, q_pool: &Option<String>) -> String {
 }
 
 fn extract_user(headers: &HeaderMap, secret: &str) -> UserClaims {
+    extract_user_with_query(headers, secret, None)
+}
+
+fn extract_user_with_query(headers: &HeaderMap, secret: &str, query_token: Option<&str>) -> UserClaims {
     if let Some(auth_val) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
         if let Some(token) = auth_val.strip_prefix("Bearer ") {
             if let Ok(claims) = verify_jwt(token, secret) {
                 return claims;
             }
+        }
+    }
+    if let Some(token) = query_token {
+        if let Ok(claims) = verify_jwt(token, secret) {
+            return claims;
         }
     }
     UserClaims {
@@ -181,6 +206,57 @@ fn extract_user(headers: &HeaderMap, secret: &str) -> UserClaims {
         display_name: "访客".into(),
         role: "guest".into(),
         exp: usize::MAX,
+    }
+}
+
+fn detect_mime_type(file_name: &str) -> &'static str {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        // Images
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        // Videos
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "ogv" | "ogg" => "video/ogg",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        // Audios
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "aac" => "audio/aac",
+        "m4a" => "audio/mp4",
+        // Documents
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        // Code / Text
+        "txt" | "log" | "env" | "ini" | "conf" | "cfg" => "text/plain; charset=utf-8",
+        "md" | "markdown" => "text/markdown; charset=utf-8",
+        "html" | "htm" => "text/plain; charset=utf-8",
+        "css" | "scss" | "less" => "text/css; charset=utf-8",
+        "js" | "mjs" | "cjs" => "text/javascript; charset=utf-8",
+        "ts" | "tsx" | "jsx" => "text/plain; charset=utf-8",
+        "rs" => "text/plain; charset=utf-8",
+        "py" => "text/plain; charset=utf-8",
+        "go" => "text/plain; charset=utf-8",
+        "java" => "text/plain; charset=utf-8",
+        "c" | "cpp" | "h" | "hpp" | "cc" => "text/plain; charset=utf-8",
+        "sh" | "bash" | "zsh" => "text/plain; charset=utf-8",
+        "sql" => "text/plain; charset=utf-8",
+        "toml" => "text/plain; charset=utf-8",
+        "yaml" | "yml" => "text/plain; charset=utf-8",
+        "xml" => "text/xml; charset=utf-8",
+        _ => "application/octet-stream",
     }
 }
 
@@ -1114,14 +1190,14 @@ async fn upload_chunk_handler(
     })))
 }
 
-/// Download single file or download folder as streaming ZIP
+/// Download single file or download folder as streaming ZIP, or preview inline with Range support
 async fn download_file_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(q): Query<FileQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().await;
-    let user = extract_user(&headers, &cfg.auth.jwt_secret);
+    let user = extract_user_with_query(&headers, &cfg.auth.jwt_secret, q.token.as_deref());
     let space = resolve_space(&q.space, &q.pool_id);
 
     let (_pool, target) =
@@ -1169,16 +1245,68 @@ async fn download_file_handler(
         if let Ok(disp) = format!("attachment; filename=\"{}.zip\"", folder_name).parse() {
             resp_headers.insert(header::CONTENT_DISPOSITION, disp);
         }
-        return Ok((resp_headers, Body::from(zip_bytes)));
+        return Ok((StatusCode::OK, resp_headers, Body::from(zip_bytes)));
     }
 
-    // 2. Single File Download
+    // 2. Single File (Preview / Inline or Download with Range support)
     let file_name = target
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("download.bin")
         .to_string();
 
+    let file_size = fs::metadata(&target)
+        .map(|m| m.len())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    let mime_type = detect_mime_type(&file_name);
+    let is_inline = q.inline.unwrap_or(false);
+
+    // Support HTTP Range Requests (Essential for browser video/audio streaming and seeking)
+    let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    if let Some(rh) = range_header {
+        if let Some(range_spec) = rh.strip_prefix("bytes=") {
+            let parts: Vec<&str> = range_spec.split('-').collect();
+            let start = parts.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let end = parts
+                .get(1)
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(file_size.saturating_sub(1))
+                .min(file_size.saturating_sub(1));
+
+            if start <= end && start < file_size {
+                let count = (end - start + 1) as usize;
+                let mut f = File::open(&target).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })))
+                })?;
+                f.seek(SeekFrom::Start(start)).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })))
+                })?;
+                let mut buf = vec![0u8; count];
+                f.read_exact(&mut buf).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })))
+                })?;
+
+                let mut resp_headers = HeaderMap::new();
+                resp_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+                resp_headers.insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
+                resp_headers.insert(
+                    header::CONTENT_RANGE,
+                    format!("bytes {}-{}/{}", start, end, file_size).parse().unwrap(),
+                );
+                resp_headers.insert(header::CONTENT_LENGTH, count.to_string().parse().unwrap());
+                if is_inline {
+                    resp_headers.insert(header::CONTENT_DISPOSITION, "inline".parse().unwrap());
+                } else if let Ok(disp) = format!("attachment; filename=\"{}\"", file_name).parse() {
+                    resp_headers.insert(header::CONTENT_DISPOSITION, disp);
+                }
+
+                return Ok((StatusCode::PARTIAL_CONTENT, resp_headers, Body::from(buf)));
+            }
+        }
+    }
+
+    // Full file response
     let bytes = fs::read(&target)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
 
@@ -1187,7 +1315,7 @@ async fn download_file_handler(
         &state.db,
         &user.sub,
         &user.email,
-        "download",
+        if is_inline { "preview" } else { "download" },
         &file_name,
         &q.path,
         file_len,
@@ -1197,15 +1325,94 @@ async fn download_file_handler(
     ).await;
 
     let mut resp_headers = HeaderMap::new();
-    resp_headers.insert(
-        header::CONTENT_TYPE,
-        "application/octet-stream".parse().unwrap(),
-    );
-    if let Ok(disp) = format!("attachment; filename=\"{}\"", file_name).parse() {
+    resp_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    resp_headers.insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
+    if is_inline {
+        resp_headers.insert(header::CONTENT_DISPOSITION, "inline".parse().unwrap());
+    } else if let Ok(disp) = format!("attachment; filename=\"{}\"", file_name).parse() {
         resp_headers.insert(header::CONTENT_DISPOSITION, disp);
     }
 
-    Ok((resp_headers, Body::from(bytes)))
+    Ok((StatusCode::OK, resp_headers, Body::from(bytes)))
+}
+
+/// Remote archive extraction (.zip, .tar.gz, .tgz, .tar)
+async fn extract_file_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ExtractRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().await;
+    let user = extract_user(&headers, &cfg.auth.jwt_secret);
+    if user.role == "guest" {
+        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": "请先登录" }))));
+    }
+    let space = resolve_space(&req.space, &req.pool_id);
+
+    // Resolve archive target path
+    let (_pool, target) = StorageManager::resolve_safe_target(&cfg, &space, &user.sub, &req.path)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?;
+
+    if !target.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "压缩文件不存在或不是有效文件" })),
+        ));
+    }
+
+    // Determine target destination directory
+    let dest_rel = req.dest_path.clone().unwrap_or_else(|| {
+        let parent = Path::new(&req.path).parent().unwrap_or(Path::new("/"));
+        parent.to_string_lossy().to_string()
+    });
+
+    let (_dest_pool, dest_dir) = StorageManager::resolve_safe_target(&cfg, &space, &user.sub, &dest_rel)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?;
+
+    // Perform decompression
+    let (extracted_bytes, file_count) = StorageManager::extract_archive(&target, &dest_dir)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("解压失败: {}", e) })),
+            )
+        })?;
+
+    // Update user quota for private space
+    if space == "private" && user.role != "admin" {
+        let _ = sqlx::query("UPDATE users SET used_bytes = used_bytes + ? WHERE id = ?")
+            .bind(extracted_bytes as i64)
+            .bind(&user.sub)
+            .execute(&state.db)
+            .await;
+    }
+
+    let file_name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("archive")
+        .to_string();
+
+    log_transfer(
+        &state.db,
+        &user.sub,
+        &user.email,
+        "extract",
+        &file_name,
+        &req.path,
+        extracted_bytes as i64,
+        "local",
+        "success",
+        None,
+    ).await;
+
+    Ok(Json(json!({
+        "status": "success",
+        "file_name": file_name,
+        "dest_path": dest_rel,
+        "extracted_bytes": extracted_bytes,
+        "file_count": file_count,
+    })))
 }
 
 async fn delete_file_handler(

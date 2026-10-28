@@ -282,6 +282,77 @@ impl StorageManager {
         }
         Ok(total)
     }
+
+    /// Extract archive (.zip, .tar.gz, .tgz, .tar) into dest_dir safely
+    pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> anyhow::Result<(u64, usize)> {
+        fs::create_dir_all(dest_dir)?;
+
+        let filename_lower = archive_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if filename_lower.ends_with(".zip") {
+            let file = File::open(archive_path)?;
+            let mut archive = zip::ZipArchive::new(file)?;
+            let mut extracted_bytes: u64 = 0;
+            let mut file_count: usize = 0;
+
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i)?;
+                let outpath = match file.enclosed_name() {
+                    Some(path) => dest_dir.join(path),
+                    None => continue,
+                };
+
+                if file.is_dir() {
+                    fs::create_dir_all(&outpath)?;
+                } else {
+                    if let Some(p) = outpath.parent() {
+                        if !p.exists() {
+                            fs::create_dir_all(p)?;
+                        }
+                    }
+                    let mut outfile = File::create(&outpath)?;
+                    let copied = std::io::copy(&mut file, &mut outfile)?;
+                    extracted_bytes += copied;
+                    file_count += 1;
+                }
+            }
+            Ok((extracted_bytes, file_count))
+        } else if filename_lower.ends_with(".tar.gz") || filename_lower.ends_with(".tgz") {
+            let output = std::process::Command::new("tar")
+                .arg("-xzf")
+                .arg(archive_path)
+                .arg("-C")
+                .arg(dest_dir)
+                .output()?;
+
+            if !output.status.success() {
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("解压 tar.gz 失败: {}", err_msg);
+            }
+            let bytes = Self::calculate_dir_size(dest_dir).unwrap_or(0);
+            Ok((bytes, 1))
+        } else if filename_lower.ends_with(".tar") {
+            let output = std::process::Command::new("tar")
+                .arg("-xf")
+                .arg(archive_path)
+                .arg("-C")
+                .arg(dest_dir)
+                .output()?;
+
+            if !output.status.success() {
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("解压 tar 失败: {}", err_msg);
+            }
+            let bytes = Self::calculate_dir_size(dest_dir).unwrap_or(0);
+            Ok((bytes, 1))
+        } else {
+            anyhow::bail!("不支持的压缩包格式，当前支持 .zip, .tar.gz, .tgz, .tar");
+        }
+    }
 }
 
 fn sanitize_segment(input: &str) -> String {
