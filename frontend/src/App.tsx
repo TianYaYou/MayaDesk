@@ -61,7 +61,7 @@ export default function App() {
   const [activeView, setActiveView] = createSignal<'files' | 'users' | 'transfers' | 'settings'>('files');
   const [mobileMenuOpen, setMobileMenuOpen] = createSignal(false);
 
-  // Requirement: Normal users only see two spaces: "私人空间" (private) and "共享空间" (shared)
+  // Space & File Explorer state
   const [activeSpace, setActiveSpace] = createSignal<'private' | 'shared'>('private');
   const [currentPath, setCurrentPath] = createSignal<string>('/');
   const [folderTree, setFolderTree] = createSignal<string[]>(['/']);
@@ -70,21 +70,29 @@ export default function App() {
   const [statusMessage, setStatusMessage] = createSignal<string>('就绪');
   const [uploadProgress, setUploadProgress] = createSignal<number | null>(null);
 
-  // Requirement 2: Collapsible Directory Tree state
-  const [collapsedPaths, setCollapsedPaths] = createSignal<Set<string>>(new Set());
+  // Collapsible Directory Tree state — using immutable string[] so SolidJS tracks every toggle & tree update
+  const [collapsedPaths, setCollapsedPaths] = createSignal<string[]>([]);
   const [showSpaceSection, setShowSpaceSection] = createSignal(true);
   const [showTreeSection, setShowTreeSection] = createSignal(true);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
 
-  // Requirement 3: Adjustable widths (Sidebar width and Name column width)
+  // Adjustable widths: Left Sidebar + Multi-Column File List ("name", "size", "hash", "mtime")
   const [sidebarWidth, setSidebarWidth] = createSignal<number>(
     Number(localStorage.getItem('mayadesk_sidebar_width')) || 240
   );
-  const [nameColWidth, setNameColWidth] = createSignal<number>(
-    Number(localStorage.getItem('mayadesk_name_col_width')) || 340
-  );
+  const [colWidths, setColWidths] = createSignal<{
+    name: number;
+    size: number;
+    hash: number;
+    mtime: number;
+  }>({
+    name: Number(localStorage.getItem('mayadesk_col_name')) || Number(localStorage.getItem('mayadesk_name_col_width')) || 340,
+    size: Number(localStorage.getItem('mayadesk_col_size')) || 105,
+    hash: Number(localStorage.getItem('mayadesk_col_hash')) || 150,
+    mtime: Number(localStorage.getItem('mayadesk_col_mtime')) || 150,
+  });
 
-  // Storage Disks & Requirement 1: Fresh Deployment Initialization state
+  // Storage Disks & Fresh Deployment Initialization state
   const [disks, setDisks] = createSignal<DiskMountSummary[]>([]);
   const [showInitDiskModal, setShowInitDiskModal] = createSignal(false);
   const [initMountPath, setInitMountPath] = createSignal('');
@@ -243,6 +251,7 @@ export default function App() {
       const res = await apiExtractArchive(activeSpace(), item.rel_path, targetDest, token());
       setExtractItem(null);
       setStatusMessage(`解压成功！共提取 ${res.file_count} 个文件 (${formatBytes(res.extracted_bytes)}) 至 ${res.dest_path}`);
+      expandAncestorsOf(res.dest_path || targetDest);
       await refreshDirectory();
       await refreshFolderTree();
       await refreshUserProfile();
@@ -280,7 +289,8 @@ export default function App() {
   const refreshFolderTree = async () => {
     try {
       const paths = await apiListFolderPaths(activeSpace(), token());
-      setFolderTree(paths);
+      const normalized = Array.from(new Set(['/', ...(paths || [])])).sort();
+      setFolderTree(normalized);
     } catch {
       setFolderTree(['/']);
     }
@@ -365,17 +375,25 @@ export default function App() {
     }
   });
 
-  // Tree helper methods for collapsible directory navigation
+  // Reactive Tree Helpers (Fixes expand/collapse update bugs including root '/' and child folder updates)
+  const isPathCollapsed = (path: string): boolean => collapsedPaths().includes(path);
+
   const toggleCollapsePath = (path: string) => {
-    setCollapsedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+    setCollapsedPaths((prev) =>
+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
+    );
+  };
+
+  const expandAncestorsOf = (path: string) => {
+    if (!path) return;
+    const toExpand = new Set<string>(['/']);
+    const parts = path.split('/').filter(Boolean);
+    let cur = '';
+    for (let i = 0; i < parts.length; i++) {
+      cur += '/' + parts[i];
+      toExpand.add(cur);
+    }
+    setCollapsedPaths((prev) => prev.filter((p) => !toExpand.has(p)));
   };
 
   const hasChildDirs = (path: string): boolean => {
@@ -383,20 +401,25 @@ export default function App() {
     return folderTree().some((p) => p !== path && p.startsWith(prefix));
   };
 
-  const isPathNodeVisible = (path: string): boolean => {
-    if (path === '/') return true;
-    const parts = path.split('/').filter(Boolean);
-    let cur = '';
-    for (let i = 0; i < parts.length - 1; i++) {
-      cur += '/' + parts[i];
-      if (collapsedPaths().has(cur)) {
-        return false;
+  const visibleFolderTree = () => {
+    const collapsed = collapsedPaths();
+    const allPaths = folderTree();
+    return allPaths.filter((path) => {
+      if (path === '/') return true;
+      if (collapsed.includes('/')) return false;
+      const parts = path.split('/').filter(Boolean);
+      let cur = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur += '/' + parts[i];
+        if (collapsed.includes(cur)) {
+          return false;
+        }
       }
-    }
-    return true;
+      return true;
+    });
   };
 
-  // Draggable Sidebar Resizer
+  // Draggable Left Sidebar Resizer
   const startResizeSidebar = (e: MouseEvent) => {
     e.preventDefault();
     const onMouseMove = (moveEvent: MouseEvent) => {
@@ -412,17 +435,22 @@ export default function App() {
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  // Draggable File List Column Resizer ("名称" 列宽可调)
-  const startResizeNameCol = (e: MouseEvent) => {
+  // Multi-Column File List Resizer ("name" | "size" | "hash" | "mtime")
+  const startResizeCol = (
+    colKey: 'name' | 'size' | 'hash' | 'mtime',
+    minW: number,
+    maxW: number,
+    e: MouseEvent
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
-    const startW = nameColWidth();
+    const startW = colWidths()[colKey];
     const onMouseMove = (moveEvent: MouseEvent) => {
       const diff = moveEvent.clientX - startX;
-      const newW = Math.max(160, Math.min(900, startW + diff));
-      setNameColWidth(newW);
-      localStorage.setItem('mayadesk_name_col_width', String(newW));
+      const newW = Math.max(minW, Math.min(maxW, startW + diff));
+      setColWidths((prev) => ({ ...prev, [colKey]: newW }));
+      localStorage.setItem(`mayadesk_col_${colKey}`, String(newW));
     };
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
@@ -430,6 +458,11 @@ export default function App() {
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const resetColWidth = (colKey: 'name' | 'size' | 'hash' | 'mtime', defaultW: number) => {
+    setColWidths((prev) => ({ ...prev, [colKey]: defaultW }));
+    localStorage.setItem(`mayadesk_col_${colKey}`, String(defaultW));
   };
 
   const handleAuthSubmit = async (e: Event) => {
@@ -516,6 +549,7 @@ export default function App() {
     try {
       await apiCreateFolder(activeSpace(), currentPath(), name.trim(), token());
       setStatusMessage(`已创建文件夹: ${name.trim()}`);
+      expandAncestorsOf(currentPath());
       await refreshDirectory();
       await refreshFolderTree();
     } catch (err: any) {
@@ -579,6 +613,7 @@ export default function App() {
       );
       setStatusMessage('文件夹上传完成');
       input.value = '';
+      expandAncestorsOf(currentPath());
       await refreshUserProfile();
       await refreshDirectory();
       await refreshFolderTree();
@@ -615,6 +650,7 @@ export default function App() {
     setActiveView('files');
     setActiveSpace(space);
     setCurrentPath('/');
+    setCollapsedPaths([]);
     setMobileMenuOpen(false);
   };
 
@@ -643,7 +679,7 @@ export default function App() {
 
   return (
     <div class="min-h-screen flex flex-col bg-white text-black text-sm select-text">
-      {/* Top Header Bar — Clean Brutalist Style (No Icons) */}
+      {/* Top Header Bar — Clean Minimalist Flat Style */}
       <header class="border-b border-black px-3 py-2 md:px-4 md:h-12 flex flex-wrap items-center justify-between gap-2 bg-white">
         <div class="flex items-center gap-2 md:gap-4">
           <button
@@ -769,9 +805,9 @@ export default function App() {
               <button
                 onClick={() => setSidebarCollapsed(false)}
                 title="展开左侧栏"
-                class="px-1 py-3 border border-black bg-white hover:bg-sky-200 text-[10px] font-mono cursor-pointer writing-vertical"
+                class="px-1 py-2 text-neutral-700 hover:text-black text-xs font-bold cursor-pointer"
               >
-                展开侧栏
+                »
               </button>
             </div>
           }
@@ -782,109 +818,124 @@ export default function App() {
               mobileMenuOpen() ? 'flex' : 'hidden'
             } md:flex border-r border-black bg-white flex-col justify-between p-3 shrink-0 overflow-y-auto min-w-[160px] max-w-[540px]`}
           >
-            <div class="space-y-4">
-              {/* Section 1: Space Categorization (Collapsible) */}
+            <div class="space-y-5">
+              {/* Section 1: Space Categorization — Clean Boxless Dropdown */}
               <div>
-                <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
-                  <span>空间分类</span>
-                  <button
-                    onClick={() => setShowSpaceSection(!showSpaceSection())}
-                    class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] cursor-pointer"
-                  >
-                    {showSpaceSection() ? '[-]' : '[+]'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSpaceSection((v) => !v)}
+                  class="w-full flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black cursor-pointer hover:text-sky-700 select-none"
+                >
+                  <span class="flex items-center gap-1.5">
+                    <span class="inline-block w-3 text-left text-neutral-500 text-xs">
+                      {showSpaceSection() ? '▾' : '▸'}
+                    </span>
+                    <span>空间分类</span>
+                  </span>
+                </button>
                 <Show when={showSpaceSection()}>
-                  <div class="mt-2 grid grid-cols-2 gap-1.5">
+                  <div class="mt-1.5 flex flex-col gap-0.5">
                     <button
+                      type="button"
                       onClick={() => selectSpace('private')}
-                      class={`p-2 border border-black text-left cursor-pointer ${
+                      class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-colors ${
                         activeSpace() === 'private' && activeView() === 'files'
-                          ? 'bg-sky-100 font-bold'
-                          : 'bg-white hover:bg-sky-50'
+                          ? 'bg-sky-100 text-black font-bold border-l-2 border-black'
+                          : 'bg-white text-neutral-700 hover:bg-sky-50'
                       }`}
                     >
-                      <div class="text-xs">私人空间</div>
-                      <div class="text-[10px] text-neutral-500 mt-0.5">个人加密隔离</div>
+                      <span class="text-xs">私人空间</span>
+                      <span class="text-[10px] text-neutral-500">个人隔离</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => selectSpace('shared')}
-                      class={`p-2 border border-black text-left cursor-pointer ${
+                      class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-colors ${
                         activeSpace() === 'shared' && activeView() === 'files'
-                          ? 'bg-sky-100 font-bold'
-                          : 'bg-white hover:bg-sky-50'
+                          ? 'bg-sky-100 text-black font-bold border-l-2 border-black'
+                          : 'bg-white text-neutral-700 hover:bg-sky-50'
                       }`}
                     >
-                      <div class="text-xs">共享空间</div>
-                      <div class="text-[10px] text-neutral-500 mt-0.5">团队协作共享</div>
+                      <span class="text-xs">共享空间</span>
+                      <span class="text-[10px] text-neutral-500">团队共享</span>
                     </button>
                   </div>
                 </Show>
               </div>
 
-              {/* Section 2: Collapsible Directory Tree (Requirement 1 & 2: No icons, Collapsible) */}
+              {/* Section 2: Boxless Minimalist Directory Tree (Fixes reactive update bug + clean borderless rows) */}
               <div>
-                <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
-                  <span>路径目录树</span>
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-[10px] font-mono text-neutral-500">
-                      {activeSpace() === 'private' ? '私人' : '共享'}
+                <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black select-none">
+                  <button
+                    type="button"
+                    onClick={() => setShowTreeSection((v) => !v)}
+                    class="flex items-center gap-1.5 cursor-pointer hover:text-sky-700"
+                  >
+                    <span class="inline-block w-3 text-left text-neutral-500 text-xs">
+                      {showTreeSection() ? '▾' : '▸'}
                     </span>
-                    <button
-                      onClick={() => setShowTreeSection(!showTreeSection())}
-                      class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] cursor-pointer"
-                    >
-                      {showTreeSection() ? '[-]' : '[+]'}
-                    </button>
-                  </div>
+                    <span>路径目录树</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => refreshFolderTree()}
+                    title="刷新目录树"
+                    class="text-[10px] font-mono text-neutral-500 hover:text-black cursor-pointer"
+                  >
+                    {activeSpace() === 'private' ? '私人' : '共享'} ↻
+                  </button>
                 </div>
 
                 <Show when={showTreeSection()}>
-                  <div class="mt-2 space-y-1 text-xs">
-                    <For each={folderTree().filter(isPathNodeVisible)}>
+                  <div class="mt-1.5 flex flex-col gap-0.5 text-xs select-none">
+                    <For each={visibleFolderTree()}>
                       {(dirPath) => {
-                        const depth = dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
-                        const folderName = dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
-                        const isSelected = () => currentPath() === dirPath && activeView() === 'files';
-                        const hasChildren = hasChildDirs(dirPath);
-                        const isCollapsed = collapsedPaths().has(dirPath);
+                        const depth =
+                          dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
+                        const folderName =
+                          dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
+                        const isSelected = () =>
+                          currentPath() === dirPath && activeView() === 'files';
 
                         return (
                           <div
-                            style={{ 'padding-left': `${depth * 14}px` }}
-                            class="flex items-center gap-1 w-full"
+                            style={{ 'padding-left': `${depth * 14 + 4}px` }}
+                            class={`group flex items-center w-full py-1 pr-2 transition-colors ${
+                              isSelected()
+                                ? 'bg-sky-100 text-black font-semibold border-l-2 border-black'
+                                : 'text-neutral-700 hover:bg-sky-50 hover:text-black'
+                            }`}
                           >
                             <Show
-                              when={hasChildren}
+                              when={hasChildDirs(dirPath)}
                               fallback={
-                                <span class="inline-block w-4 text-center text-neutral-300 font-mono text-[10px] shrink-0">
-                                  -
+                                <span class="inline-block w-4 text-center text-neutral-300 text-xs shrink-0">
+                                  ·
                                 </span>
                               }
                             >
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   toggleCollapsePath(dirPath);
                                 }}
-                                title={isCollapsed ? '展开子目录' : '折叠子目录'}
-                                class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] shrink-0 cursor-pointer"
+                                title={isPathCollapsed(dirPath) ? '展开子目录' : '折叠子目录'}
+                                class="w-4 h-4 flex items-center justify-center text-neutral-500 hover:text-black text-xs shrink-0 cursor-pointer"
                               >
-                                {isCollapsed ? '[+]' : '[-]'}
+                                {isPathCollapsed(dirPath) ? '▸' : '▾'}
                               </button>
                             </Show>
 
                             <button
+                              type="button"
                               onClick={() => {
                                 setActiveView('files');
                                 setCurrentPath(dirPath);
+                                expandAncestorsOf(dirPath);
                                 setMobileMenuOpen(false);
                               }}
-                              class={`flex-1 text-left py-1 px-1.5 border border-black truncate cursor-pointer ${
-                                isSelected()
-                                  ? 'bg-sky-100 font-semibold'
-                                  : 'bg-white hover:bg-sky-50'
-                              }`}
+                              class="flex-1 text-left pl-1 truncate cursor-pointer"
                             >
                               <span class="truncate">{folderName}</span>
                             </button>
@@ -903,10 +954,10 @@ export default function App() {
                 <span>存储配额</span>
                 <button
                   onClick={() => setSidebarCollapsed(true)}
-                  class="hidden md:inline-block px-1 py-0.5 border border-black bg-white hover:bg-sky-100 text-[10px] font-mono cursor-pointer"
+                  class="hidden md:inline-block text-[11px] text-neutral-500 hover:text-black font-normal cursor-pointer"
                   title="收起左侧栏"
                 >
-                  [收起]
+                  « 收起
                 </button>
               </div>
 
@@ -925,7 +976,7 @@ export default function App() {
                       : '0 B (需管理员授权)'}
                   </span>
                 </div>
-                <div class="w-full h-2 border border-black bg-white overflow-hidden">
+                <div class="w-full h-1.5 border border-black bg-white overflow-hidden">
                   <div
                     class="h-full bg-black"
                     style={{
@@ -944,12 +995,12 @@ export default function App() {
           </aside>
         </Show>
 
-        {/* Draggable Divider between Left Sidebar and Right Main Area (Requirement 3) */}
+        {/* Draggable Divider between Left Sidebar and Right Main Area */}
         <Show when={!sidebarCollapsed()}>
           <div
             onMouseDown={startResizeSidebar}
             onDblClick={() => setSidebarWidth(240)}
-            class="hidden md:block w-1.5 hover:w-2 bg-neutral-300 hover:bg-sky-400 cursor-col-resize shrink-0 transition-colors select-none"
+            class="hidden md:block w-1 hover:w-1.5 bg-neutral-200 hover:bg-sky-400 cursor-col-resize shrink-0 transition-colors select-none"
             title="拖拽调整左侧栏宽度，双击恢复默认"
           />
         </Show>
@@ -989,7 +1040,6 @@ export default function App() {
                   <input type="file" multiple onChange={handleFileUpload} class="hidden" />
                 </label>
 
-                {/* Requirement 2: Folder Upload */}
                 <label class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer">
                   上传文件夹
                   <input
@@ -1004,7 +1054,10 @@ export default function App() {
                 </label>
 
                 <button
-                  onClick={() => refreshDirectory()}
+                  onClick={() => {
+                    refreshDirectory();
+                    refreshFolderTree();
+                  }}
                   class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer shrink-0"
                 >
                   刷新
@@ -1020,28 +1073,69 @@ export default function App() {
               </div>
             </Show>
 
-            {/* Flat File List with Resizable Column Widths (Requirement 3) */}
+            {/* Flat File List with Multi-Column Resizable Widths */}
             <div class="flex-1 p-3 sm:p-6 overflow-x-auto">
-              <div class="border border-black min-w-[560px]">
-                {/* Desktop Resizable Table Header */}
+              <div class="border border-black min-w-[620px]">
+                {/* Desktop Resizable Table Header (All data columns adjustable + double-click reset) */}
                 <div class="hidden sm:flex border-b border-black bg-sky-100 text-xs font-bold items-center select-none">
-                  {/* Resizable Name Column Header */}
+                  {/* Resizable Column 1: Name */}
                   <div
-                    style={{ width: `${nameColWidth()}px` }}
-                    class="relative p-2 shrink-0 flex items-center justify-between border-r border-black"
+                    style={{ width: `${colWidths().name}px` }}
+                    class="relative py-2 px-3 shrink-0 flex items-center justify-between border-r border-black"
                   >
                     <span>名称</span>
                     <div
-                      onMouseDown={startResizeNameCol}
-                      onDblClick={() => setNameColWidth(340)}
+                      onMouseDown={(e) => startResizeCol('name', 160, 900, e)}
+                      onDblClick={() => resetColWidth('name', 340)}
                       class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
-                      title="拖拽调节列宽，双击复位"
+                      title="左右拖拽调整「名称」列宽，双击恢复默认"
                     />
                   </div>
-                  <div class="w-24 p-2 shrink-0 font-mono border-r border-black">大小</div>
-                  <div class="w-36 p-2 shrink-0 font-mono border-r border-black">BLAKE3 校验</div>
-                  <div class="w-36 p-2 shrink-0 font-mono border-r border-black">修改时间</div>
-                  <div class="flex-1 p-2 text-right">操作</div>
+
+                  {/* Resizable Column 2: Size */}
+                  <div
+                    style={{ width: `${colWidths().size}px` }}
+                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                  >
+                    <span>大小</span>
+                    <div
+                      onMouseDown={(e) => startResizeCol('size', 72, 260, e)}
+                      onDblClick={() => resetColWidth('size', 105)}
+                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
+                      title="左右拖拽调整「大小」列宽，双击恢复默认"
+                    />
+                  </div>
+
+                  {/* Resizable Column 3: BLAKE3 Hash */}
+                  <div
+                    style={{ width: `${colWidths().hash}px` }}
+                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                  >
+                    <span>BLAKE3 校验</span>
+                    <div
+                      onMouseDown={(e) => startResizeCol('hash', 90, 320, e)}
+                      onDblClick={() => resetColWidth('hash', 150)}
+                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
+                      title="左右拖拽调整「BLAKE3 校验」列宽，双击恢复默认"
+                    />
+                  </div>
+
+                  {/* Resizable Column 4: Modified Time */}
+                  <div
+                    style={{ width: `${colWidths().mtime}px` }}
+                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                  >
+                    <span>修改时间</span>
+                    <div
+                      onMouseDown={(e) => startResizeCol('mtime', 110, 300, e)}
+                      onDblClick={() => resetColWidth('mtime', 150)}
+                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
+                      title="左右拖拽调整「修改时间」列宽，双击恢复默认"
+                    />
+                  </div>
+
+                  {/* Flexible Column 5: Actions */}
+                  <div class="flex-1 py-2 px-3 text-right min-w-[130px]">操作</div>
                 </div>
 
                 {/* Mobile Header */}
@@ -1062,11 +1156,11 @@ export default function App() {
                 >
                   <For each={entries()}>
                     {(item) => (
-                      <div class="px-3 py-2 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:flex-row sm:items-center">
+                      <div class="px-3 sm:px-0 py-2 sm:py-0 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:flex-row sm:items-stretch">
                         {/* Resizable Name Column */}
                         <div
-                          style={{ width: `${nameColWidth()}px` }}
-                          class="sm:shrink-0 flex items-center justify-between sm:justify-start gap-2 min-w-0 pr-2"
+                          style={{ width: `${colWidths().name}px` }}
+                          class="sm:shrink-0 sm:py-2 sm:px-3 sm:border-r sm:border-neutral-200 flex items-center justify-between sm:justify-start gap-2 min-w-0"
                         >
                           <div class="flex items-center gap-2 min-w-0">
                             <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0 font-semibold">
@@ -1100,7 +1194,10 @@ export default function App() {
                               }
                             >
                               <button
-                                onClick={() => setCurrentPath(item.rel_path)}
+                                onClick={() => {
+                                  setCurrentPath(item.rel_path);
+                                  expandAncestorsOf(item.rel_path);
+                                }}
                                 class="text-left underline hover:bg-sky-100 cursor-pointer font-semibold truncate"
                               >
                                 {item.name}
@@ -1151,17 +1248,26 @@ export default function App() {
                           <span>{formatTime(item.modified_unix)}</span>
                         </div>
 
-                        {/* Desktop Columns */}
-                        <div class="hidden sm:block w-24 shrink-0 font-mono px-2">
+                        {/* Desktop Resizable Columns */}
+                        <div
+                          style={{ width: `${colWidths().size}px` }}
+                          class="hidden sm:flex items-center shrink-0 font-mono py-2 px-2.5 border-r border-neutral-200 truncate"
+                        >
                           {item.is_dir ? '-' : formatBytes(item.size_bytes)}
                         </div>
-                        <div class="hidden sm:block w-36 shrink-0 font-mono text-[11px] text-neutral-600 truncate px-2">
+                        <div
+                          style={{ width: `${colWidths().hash}px` }}
+                          class="hidden sm:flex items-center shrink-0 font-mono text-[11px] text-neutral-600 py-2 px-2.5 border-r border-neutral-200 truncate"
+                        >
                           {item.blake3_short || '-'}
                         </div>
-                        <div class="hidden sm:block w-36 shrink-0 font-mono text-[11px] px-2">
+                        <div
+                          style={{ width: `${colWidths().mtime}px` }}
+                          class="hidden sm:flex items-center shrink-0 font-mono text-[11px] py-2 px-2.5 border-r border-neutral-200 truncate"
+                        >
                           {formatTime(item.modified_unix)}
                         </div>
-                        <div class="hidden sm:flex flex-1 justify-end gap-1.5 px-2">
+                        <div class="hidden sm:flex flex-1 items-center justify-end gap-1.5 py-2 px-3 min-w-[130px]">
                           {/* Online Preview Button */}
                           <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
                             <button
@@ -1184,7 +1290,7 @@ export default function App() {
                             </button>
                           </Show>
 
-                          {/* Requirement 2: Directory downloads as ZIP, File downloads directly */}
+                          {/* Directory downloads as ZIP, File downloads directly */}
                           <a
                             href={getDownloadUrl(activeSpace(), item.rel_path)}
                             target="_blank"
@@ -1652,7 +1758,7 @@ export default function App() {
                     : 'bg-white hover:bg-sky-100'
                 }`}
               >
-                [上级目录]
+                上级目录
               </button>
 
               <button
@@ -1660,7 +1766,7 @@ export default function App() {
                 onClick={() => loadFsDirectory(fsCurrentPath())}
                 class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
               >
-                [刷新]
+                刷新
               </button>
 
               <button
@@ -1668,7 +1774,7 @@ export default function App() {
                 onClick={() => setShowFsMkdirInput(!showFsMkdirInput())}
                 class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
               >
-                {showFsMkdirInput() ? '[- 取消新建]' : '[+ 新建子目录]'}
+                {showFsMkdirInput() ? '取消新建' : '+ 新建子目录'}
               </button>
             </div>
 
