@@ -1,0 +1,22 @@
+{
+  "name": "mayadesk-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ultra-lightweight Web & Tauri v2 Frontend for MayaDesk P2P Multi-Disk NAS Cloud Drive",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}

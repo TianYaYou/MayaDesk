@@ -1,0 +1,19 @@
+[package]
+name = "mayadesk-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tauri v2 cross-platform ultra-lightweight shell for MayaDesk (macOS, Windows, Linux, Android)"
+
+[lib]
+name = "mayadesk_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+tauri = { version = "2.1", features = [] }

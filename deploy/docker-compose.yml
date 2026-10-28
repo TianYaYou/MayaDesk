@@ -1,0 +1,32 @@
+version: "3.9"
+
+# MayaDesk Zero-Public-IP Deployment Stack
+# 1. mayadesk-server binds ONLY to internal container network (no host ports required for WAN)
+# 2. cloudflared establishes an outbound-only Cloudflare Zero Trust Tunnel to forward Web & Signaling traffic
+services:
+  mayadesk-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    container_name: mayadesk-server
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env.example
+    volumes:
+      - ../data:/app/data
+      # Mount Physical Multi-Disk NAS Pools (Customize paths per host NAS)
+      - /mnt/nvme_pool:/mnt/nvme_pool
+      - /mnt/hdd_array_1:/mnt/hdd_array_1
+      - /mnt/hdd_array_2:/mnt/hdd_array_2
+    # UDP port for direct LAN / UPnP STUN P2P QUIC/WebRTC hole-punching
+    ports:
+      - "127.0.0.1:8080:8080/tcp"
+      - "51820:51820/udp"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: mayadesk-cftunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - mayadesk-server

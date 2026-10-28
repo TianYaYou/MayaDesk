@@ -1,0 +1,35 @@
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+
+# Rust / Cargo / Tauri
+target/
+**/target/
+Cargo.lock
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+
+# Runtime & Storage Data
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+!deploy/.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Logs & Binaries
+*.log
+cloudflared
