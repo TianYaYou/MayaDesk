@@ -8,16 +8,17 @@ mod vfs;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use sqlx::SqlitePool;
+use tokio::sync::RwLock;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::AppConfig;
 use crate::p2p::SignalingHub;
-use crate::vfs::StorageManager;
 
 pub struct AppState {
-    pub config: AppConfig,
-    pub storage: StorageManager,
+    pub config: RwLock<AppConfig>,
+    pub db: SqlitePool,
     pub signaling: SignalingHub,
 }
 
@@ -27,30 +28,33 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "mayadesk_server=debug,tower_http=info".into()
+            "mayadesk_server=info,tower_http=info".into()
         }))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = AppConfig::from_env()?;
-    info!("Starting MayaDesk Server v{}", env!("CARGO_PKG_VERSION"));
+    let config = AppConfig::load()?;
+    info!(
+        "Starting {} v{} (config: {})",
+        config.server.app_name,
+        env!("CARGO_PKG_VERSION"),
+        config.config_file_path
+    );
 
-    // Initialize Multi-Disk NAS Storage Manager (Private + Shared Pools)
-    let storage = StorageManager::initialize(&config).await?;
-    let signaling = SignalingHub::new(config.stun_servers.clone());
+    let db = db::init_db(&config).await?;
+    let signaling = SignalingHub::new();
 
-    // Ensure Cloudflare Tunnel supervision check
     tunnel::verify_tunnel_status(&config).await;
 
+    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
     let state = Arc::new(AppState {
-        config: config.clone(),
-        storage,
+        config: RwLock::new(config),
+        db,
         signaling,
     });
 
-    let app = api::create_router(state);
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    info!("Listening on local tunnel endpoint http://{}", addr);
+    let app = api::create_router(state).await;
+    info!("Server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

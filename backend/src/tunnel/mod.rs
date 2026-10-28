@@ -1,15 +1,16 @@
 use tracing::info;
 use crate::config::AppConfig;
 
-/// Verifies whether the embedded or sidecar Cloudflare Tunnel (`cloudflared`) is configured.
-/// Ensures zero public IP/port exposure while providing automatic Web & Signaling reachability.
 pub async fn verify_tunnel_status(config: &AppConfig) {
-    match &config.cf_tunnel_token {
-        Some(token) if !token.is_empty() => {
-            info!("Cloudflare Tunnel token detected: outbound-only Zero Trust tunnel ready.");
-        }
-        _ => {
-            info!("Running in local/LAN mode (no CF_TUNNEL_TOKEN set). P2P LAN discovery active.");
-        }
+    let cf = &config.network.cloudflare_tunnel;
+    if cf.enabled && !cf.tunnel_token.is_empty() {
+        info!(
+            "Cloudflare Tunnel '{}' active (outbound Zero Trust mode, zero public ports).",
+            cf.tunnel_name
+        );
+    } else {
+        info!(
+            "Cloudflare Tunnel token not set yet (configurable via config.toml or Web Settings)."
+        );
     }
 }

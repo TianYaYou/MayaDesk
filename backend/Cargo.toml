@@ -17,21 +17,21 @@ blake3.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 
-# Web & Signaling Server
+# Web, Static File Serving & WebSocket Signaling Server
 axum = { version = "0.7", features = ["ws", "multipart", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs", "compression-gzip"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
 # Database & Multi-Disk VFS Storage
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
-opendal = { version = "0.50", features = ["services-fs", "services-s3", "services-webdav"] }
 
 # Auth (Email/Password Argon2 + Google OAuth2 + JWT)
 argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
 jsonwebtoken = "9.3"
-oauth2 = "4.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# P2P Engine (WebRTC DataChannel & STUN/ICE Signaling)
-webrtc = "0.11"
+# Config & Environment
+toml = "0.8"
 dotenvy = "0.15"

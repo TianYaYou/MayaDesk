@@ -1,8 +1,8 @@
-version: "3.9"
+# ==============================================================================
+# MayaDesk Docker Compose 部署编排 (deploy/docker-compose.yml)
+# 所有宿主机路径、端口、挂载盘与 Cloudflare Tunnel 均可通过 deploy/.env 灵活配置
+# ==============================================================================
 
-# MayaDesk Zero-Public-IP Deployment Stack
-# 1. mayadesk-server binds ONLY to internal container network (no host ports required for WAN)
-# 2. cloudflared establishes an outbound-only Cloudflare Zero Trust Tunnel to forward Web & Signaling traffic
 services:
   mayadesk-server:
     build:
@@ -10,23 +10,41 @@ services:
       dockerfile: deploy/Dockerfile.backend
     container_name: mayadesk-server
     restart: unless-stopped
-    env_file:
-      - ../backend/.env.example
+    environment:
+      - MAYADESK_CONFIG=/app/config/config.toml
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=${SERVER_PORT:-8080}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
+      - SQLITE_PATH=/app/data/db/mayadesk.db
+      - TEMP_UPLOAD_DIR=/app/data/tmp_chunks
+      - STATIC_DIR=/app/frontend/dist
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/v1/auth/google/callback}
+      - CF_TUNNEL_TOKEN=${CF_TUNNEL_TOKEN:-}
     volumes:
-      - ../data:/app/data
-      # Mount Physical Multi-Disk NAS Pools (Customize paths per host NAS)
-      - /mnt/nvme_pool:/mnt/nvme_pool
-      - /mnt/hdd_array_1:/mnt/hdd_array_1
-      - /mnt/hdd_array_2:/mnt/hdd_array_2
-    # UDP port for direct LAN / UPnP STUN P2P QUIC/WebRTC hole-punching
+      # 1. 核心配置文件挂载（在 Web 界面修改路径或参数后实时写回宿主机）
+      - ${HOST_CONFIG_PATH:-../config/config.toml}:/app/config/config.toml
+      # 2. 数据库、分片缓存与日志目录挂载
+      - ${HOST_DATA_DIR:-../data/appdata}:/app/data
+      # 3. 多盘 NAS 物理盘挂载点（可在 .env 中指向宿主机任意硬盘路径，如 /mnt/nvme0、/mnt/raid1）
+      - ${HOST_PRIVATE_DISK_PATH:-../data/disks/private_nvme}:/app/data/storage/private_nvme
+      - ${HOST_SHARED_DISK1_PATH:-../data/disks/shared_disk1}:/app/data/storage/shared_disk1
+      - ${HOST_SHARED_DISK2_PATH:-../data/disks/shared_disk2}:/app/data/storage/shared_disk2
     ports:
-      - "127.0.0.1:8080:8080/tcp"
-      - "51820:51820/udp"
+      # 局域网/本地调试 Web 端口（若完全仅靠 Cloudflare Tunnel 访问，可改为 127.0.0.1:8080:8080）
+      - "${HOST_BIND_IP:-0.0.0.0}:${SERVER_PORT:-8080}:8080/tcp"
+      # P2P UDP 打洞端口
+      - "${P2P_UDP_PORT:-51820}:51820/udp"
 
+  # 独立 Cloudflare Zero Trust Tunnel 容器（不暴露公网 IP 即可通过域名访问）
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: mayadesk-cftunnel
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:-}
     depends_on:
       - mayadesk-server
+    profiles:
+      - tunnel

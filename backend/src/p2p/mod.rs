@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
 
-/// Signaling message exchanged over Cloudflare Tunnel WebSocket (`wss://.../api/v1/p2p/ws`)
+/// Signaling message exchanged over Cloudflare Tunnel WebSocket (`/api/v1/p2p/ws`)
 /// to negotiate direct WebRTC DataChannel / QUIC P2P connections before falling back to HTTPS.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalingEnvelope {
+    Hello {
+        peer_id: String,
+    },
     Offer {
         session_id: String,
         sdp: String,
@@ -16,22 +20,24 @@ pub enum SignalingEnvelope {
     IceCandidate {
         session_id: String,
         candidate: String,
-        sdp_mid: Option<String>,
-        sdp_mline_index: Option<u16>,
     },
-    TransportFallback {
-        session_id: String,
-        reason: String,
+    Ping {
+        ts: u64,
+    },
+    Pong {
+        ts: u64,
+        mode: String,
     },
 }
 
 #[derive(Clone)]
 pub struct SignalingHub {
-    pub stun_servers: Vec<String>,
+    pub tx: broadcast::Sender<String>,
 }
 
 impl SignalingHub {
-    pub fn new(stun_servers: Vec<String>) -> Self {
-        Self { stun_servers }
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(128);
+        Self { tx }
     }
 }

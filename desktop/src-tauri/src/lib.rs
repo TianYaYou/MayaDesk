@@ -9,7 +9,7 @@ pub struct ChunkHashResult {
 /// Native Rust command exposed to WebView on macOS, Windows, Linux, and Android
 /// for high-speed BLAKE3 file chunk hashing and P2P deduplication checks.
 #[tauri::command]
-pub fn compute_chunk_blake3(payload: Vec<u8>) -> ChunkHashResult {
+fn compute_chunk_blake3(payload: Vec<u8>) -> ChunkHashResult {
     let hash = blake3::hash(&payload);
     ChunkHashResult {
         blake3_hex: hash.to_hex().to_string(),

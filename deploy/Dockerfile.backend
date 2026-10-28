@@ -1,15 +1,40 @@
-# Multi-Stage Ultra-Lightweight Rust Build for MayaDesk Server
-FROM rust:1.83-slim-bookworm AS builder
-WORKDIR /usr/src/mayadesk
+# ==============================================================================
+# MayaDesk 全栈合一多阶段构建镜像 (Frontend SolidJS + Backend Rust Axum/SQLx)
+# ==============================================================================
+
+# Stage 1: 构建极简前端静态产物 (SolidJS + Vite + Tailwind CSS v4)
+FROM node:22-alpine AS frontend-builder
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: 编译 Rust 后端服务 (Axum + SQLite WAL + P2P Signaling + VFS)
+FROM rust:1.83-slim-bookworm AS backend-builder
+WORKDIR /build
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml ./
 COPY backend ./backend
 COPY desktop/src-tauri ./desktop/src-tauri
 RUN cargo build --release --package mayadesk-server
 
+# Stage 3: 极轻量生产运行镜像
 FROM debian:bookworm-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/src/mayadesk/target/release/mayadesk-server /app/mayadesk-server
+RUN apt-get update && apt-get install -y ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
+
+# 拷贝后端二进制、前端静态包、默认配置文件
+COPY --from=backend-builder /build/target/release/mayadesk-server /app/mayadesk-server
+COPY --from=frontend-builder /build/frontend/dist /app/frontend/dist
+COPY config/config.toml /app/config/config.toml
+
+# 创建默认可挂载目录结构
+RUN mkdir -p /app/data/db /app/data/tmp_chunks /app/data/logs \
+    /app/data/storage/private_nvme /app/data/storage/shared_disk1 /app/data/storage/shared_disk2
+
+ENV MAYADESK_CONFIG=/app/config/config.toml
+ENV STATIC_DIR=/app/frontend/dist
+
 EXPOSE 8080/tcp 51820/udp
 ENTRYPOINT ["/app/mayadesk-server"]

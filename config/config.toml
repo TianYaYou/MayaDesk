@@ -1,0 +1,79 @@
+# ==============================================================================
+# MayaDesk 全量核心配置文件 (config/config.toml)
+# 所有路径、NAS 多盘挂载点、鉴权参数、P2P 节点与 Cloudflare Tunnel 均可在此或通过环境变量/Web管理端配置
+# ==============================================================================
+
+[server]
+app_name = "MayaDesk"
+host = "0.0.0.0"
+port = 8080
+public_url = "https://drive.example.com"
+# 前端静态资源目录（Docker 容器内或本地相对路径）
+static_dir = "./frontend/dist"
+# 临时分片缓存路径与日志路径
+temp_upload_dir = "./data/tmp_chunks"
+log_dir = "./data/logs"
+max_upload_size_mb = 102400 # 100 GB
+
+[database]
+# SQLite 数据库文件路径（自动启用 WAL 高并发模式）
+sqlite_path = "./data/db/mayadesk.db"
+auto_migrate = true
+
+[auth]
+jwt_secret = "change-this-to-a-secure-random-64-char-secret-in-production"
+access_token_ttl_secs = 3600
+refresh_token_ttl_days = 30
+allow_registration = true
+default_admin_email = "admin@mayadesk.local"
+default_admin_password = "admin123456"
+
+[auth.google]
+enabled = true
+client_id = "your-google-client-id.apps.googleusercontent.com"
+client_secret = "your-google-client-secret"
+redirect_uri = "https://drive.example.com/api/v1/auth/google/callback"
+
+[network]
+# P2P 优先 + Cloudflare Tunnel 兜底配置
+p2p_enabled = true
+p2p_udp_port = 51820
+p2p_handshake_timeout_ms = 1500
+chunk_size_kb = 4096
+stun_servers = [
+  "stun:stun.cloudflare.com:3478",
+  "stun:stun.l.google.com:19302"
+]
+
+[network.cloudflare_tunnel]
+enabled = true
+tunnel_name = "mayadesk-nas-tunnel"
+tunnel_token = ""
+fallback_https_enabled = true
+
+# ==============================================================================
+# 多盘 NAS 存储池配置 (支持任意数量的私人硬盘池与共享硬盘池，路径完全可自定义)
+# ==============================================================================
+[[storage.pools]]
+id = "private-main"
+name = "私人主硬盘 (NVMe)"
+pool_type = "private"         # "private" (按用户 UID 自动隔离目录) | "shared" (多用户共享盘)
+mount_path = "./data/storage/private_nvme"
+quota_gb = 1024
+read_only = false
+
+[[storage.pools]]
+id = "shared-nas-disk1"
+name = "共享盘 01 · 团队资料库"
+pool_type = "shared"
+mount_path = "./data/storage/shared_disk1"
+quota_gb = 4096
+read_only = false
+
+[[storage.pools]]
+id = "shared-nas-disk2"
+name = "共享盘 02 · 媒体与归档阵列"
+pool_type = "shared"
+mount_path = "./data/storage/shared_disk2"
+quota_gb = 8192
+read_only = false
