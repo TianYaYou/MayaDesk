@@ -54,7 +54,7 @@ export default function App() {
   const [activeView, setActiveView] = createSignal<'files' | 'users' | 'transfers' | 'settings'>('files');
   const [mobileMenuOpen, setMobileMenuOpen] = createSignal(false);
 
-  // Requirement 3: Normal users only see two spaces: "私人" (private) and "共享" (shared)
+  // Requirement: Normal users only see two spaces: "私人空间" (private) and "共享空间" (shared)
   const [activeSpace, setActiveSpace] = createSignal<'private' | 'shared'>('private');
   const [currentPath, setCurrentPath] = createSignal<string>('/');
   const [folderTree, setFolderTree] = createSignal<string[]>(['/']);
@@ -62,6 +62,20 @@ export default function App() {
   const [loadingFiles, setLoadingFiles] = createSignal(false);
   const [statusMessage, setStatusMessage] = createSignal<string>('就绪');
   const [uploadProgress, setUploadProgress] = createSignal<number | null>(null);
+
+  // Requirement 2: Collapsible Directory Tree state
+  const [collapsedPaths, setCollapsedPaths] = createSignal<Set<string>>(new Set());
+  const [showSpaceSection, setShowSpaceSection] = createSignal(true);
+  const [showTreeSection, setShowTreeSection] = createSignal(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+
+  // Requirement 3: Adjustable widths (Sidebar width and Name column width)
+  const [sidebarWidth, setSidebarWidth] = createSignal<number>(
+    Number(localStorage.getItem('mayadesk_sidebar_width')) || 240
+  );
+  const [nameColWidth, setNameColWidth] = createSignal<number>(
+    Number(localStorage.getItem('mayadesk_name_col_width')) || 340
+  );
 
   // Storage Disks & Requirement 1: Fresh Deployment Initialization state
   const [disks, setDisks] = createSignal<DiskMountSummary[]>([]);
@@ -91,7 +105,7 @@ export default function App() {
       const profile = await apiGetUserProfile(token());
       setUser(profile);
     } catch {
-      // If profile fetch fails, token may be expired
+      // Offline
     }
   };
 
@@ -99,12 +113,11 @@ export default function App() {
     try {
       const list = await apiListDisks(token());
       setDisks(list);
-      // Requirement 1: If disks are empty and user is admin, prompt initialization wizard
       if (list.length === 0 && isAdmin()) {
         setShowInitDiskModal(true);
       }
     } catch {
-      // Offline fallback
+      // Offline
     }
   };
 
@@ -196,6 +209,73 @@ export default function App() {
     }
   });
 
+  // Tree helper methods for collapsible directory navigation
+  const toggleCollapsePath = (path: string) => {
+    setCollapsedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const hasChildDirs = (path: string): boolean => {
+    const prefix = path === '/' ? '/' : path + '/';
+    return folderTree().some((p) => p !== path && p.startsWith(prefix));
+  };
+
+  const isPathNodeVisible = (path: string): boolean => {
+    if (path === '/') return true;
+    const parts = path.split('/').filter(Boolean);
+    let cur = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur += '/' + parts[i];
+      if (collapsedPaths().has(cur)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Draggable Sidebar Resizer
+  const startResizeSidebar = (e: MouseEvent) => {
+    e.preventDefault();
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.max(160, Math.min(540, moveEvent.clientX));
+      setSidebarWidth(newWidth);
+      localStorage.setItem('mayadesk_sidebar_width', String(newWidth));
+    };
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Draggable File List Column Resizer ("名称" 列宽可调)
+  const startResizeNameCol = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = nameColWidth();
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const diff = moveEvent.clientX - startX;
+      const newW = Math.max(160, Math.min(900, startW + diff));
+      setNameColWidth(newW);
+      localStorage.setItem('mayadesk_name_col_width', String(newW));
+    };
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
   const handleAuthSubmit = async (e: Event) => {
     e.preventDefault();
     try {
@@ -233,7 +313,6 @@ export default function App() {
     }
   };
 
-  // Requirement 1: Fresh Deployment Initial Disk Setup Wizard
   const handleInitDiskSubmit = async (e: Event) => {
     e.preventDefault();
     if (!initMountPath().trim()) {
@@ -261,7 +340,6 @@ export default function App() {
     }
   };
 
-  // Requirement 3: Quota check prior to upload
   const checkUploadAllowed = (): boolean => {
     if (isAdmin()) return true;
     const u = user();
@@ -289,7 +367,6 @@ export default function App() {
     }
   };
 
-  // Requirement 2 & 4: Upload files with relay fallback & chunked upload for large files
   const handleFileUpload = async (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
@@ -310,7 +387,7 @@ export default function App() {
           setStatusMessage(msg);
         }
       );
-      setStatusMessage('文件上传完成 (已记录审计日志)');
+      setStatusMessage('文件上传完成');
       input.value = '';
       await refreshUserProfile();
       await refreshDirectory();
@@ -323,7 +400,6 @@ export default function App() {
     }
   };
 
-  // Requirement 2: Folder Upload preserving directory hierarchy (webkitdirectory)
   const handleFolderUpload = async (e: Event) => {
     const input = e.currentTarget as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
@@ -345,7 +421,7 @@ export default function App() {
           setStatusMessage(msg);
         }
       );
-      setStatusMessage('文件夹上传完成 (层级结构已还原)');
+      setStatusMessage('文件夹上传完成');
       input.value = '';
       await refreshUserProfile();
       await refreshDirectory();
@@ -359,7 +435,7 @@ export default function App() {
   };
 
   const handleDelete = async (entry: VfsFileEntry) => {
-    const typeLabel = entry.is_dir ? '文件夹（包含其所有子文件）' : '文件';
+    const typeLabel = entry.is_dir ? '文件夹（含其所有子文件）' : '文件';
     if (!window.confirm(`确认删除此${typeLabel} "${entry.name}" 吗？`)) return;
     try {
       await apiDeleteEntry(activeSpace(), entry.rel_path, token());
@@ -386,7 +462,6 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
-  // Admin Quota Update
   const handleSaveUserQuota = async (userId: string) => {
     const gb = editingQuotas()[userId] || 0;
     const bytes = gb * 1024 * 1024 * 1024;
@@ -411,15 +486,15 @@ export default function App() {
   };
 
   return (
-    <div class="min-h-screen flex flex-col bg-white text-black text-sm">
-      {/* Top Flat Header Bar */}
+    <div class="min-h-screen flex flex-col bg-white text-black text-sm select-text">
+      {/* Top Header Bar — Clean Brutalist Style (No Icons) */}
       <header class="border-b border-black px-3 py-2 md:px-4 md:h-12 flex flex-wrap items-center justify-between gap-2 bg-white">
         <div class="flex items-center gap-2 md:gap-4">
           <button
             onClick={() => setMobileMenuOpen((v) => !v)}
             class="md:hidden px-2 py-1 border border-black bg-sky-100 text-black text-xs font-bold cursor-pointer"
           >
-            {mobileMenuOpen() ? '✕ 收起目录' : '☰ 空间路径'}
+            {mobileMenuOpen() ? '关闭目录' : '目录导航'}
           </button>
 
           <div class="flex items-center gap-1.5 font-bold tracking-tight text-sm md:text-base">
@@ -479,7 +554,7 @@ export default function App() {
             onClick={() =>
               setTransportChannel((c) => (c === 'p2p-lan' ? 'cf-tunnel-web' : 'p2p-lan'))
             }
-            title="点击切换 P2P 直连 / Cloudflare Tunnel 兜底通道"
+            title="点击切换 P2P 直连 / 服务器中继模式"
             class="px-2 py-1 border border-black bg-sky-100 text-black font-mono cursor-pointer text-[11px] md:text-xs"
           >
             {transportChannel() === 'p2p-lan' ? `P2P:${rttMs()}ms` : `中继模式`}
@@ -503,7 +578,6 @@ export default function App() {
               <button
                 onClick={handleLogout}
                 class="px-1.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
-                title="退出登录"
               >
                 退出
               </button>
@@ -512,139 +586,217 @@ export default function App() {
         </div>
       </header>
 
-      {/* Requirement 1: Fresh Deployment Banner for Admin when no storage pool is configured */}
+      {/* Deployment Banner for Admin when no storage pool is configured */}
       <Show when={disks().length === 0 && isAdmin()}>
         <div class="bg-amber-100 border-b border-black p-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div>
-            <span class="font-bold">⚠️ 存储空间尚未初始化：</span>
+            <span class="font-bold">[提示] 存储空间尚未初始化：</span>
             <span>当前系统尚未挂载任何物理存储盘，文件服务暂不可用。</span>
           </div>
           <button
             onClick={() => setShowInitDiskModal(true)}
             class="px-3 py-1 border border-black bg-amber-300 hover:bg-amber-400 font-bold cursor-pointer shrink-0"
           >
-            + 立即配置初始存储盘
+            立即配置初始存储盘
           </button>
         </div>
       </Show>
 
-      {/* Main Workspace: Requirement 5 (Left Path Navigation, Right Main Content) */}
-      <div class="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Left Sidebar — Path & Space Tree Navigation (Hidden on Mobile unless toggled) */}
-        <aside
-          class={`${
-            mobileMenuOpen() ? 'flex' : 'hidden'
-          } md:flex md:w-64 border-r border-black bg-white flex-col justify-between p-3 shrink-0 overflow-y-auto`}
+      {/* Main Workspace (Left Path & Space Tree, Right Content) */}
+      <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        {/* Left Sidebar — Resizable & Collapsible */}
+        <Show
+          when={!sidebarCollapsed()}
+          fallback={
+            /* Collapsed Slim Strip */
+            <div class="hidden md:flex flex-col items-center py-3 border-r border-black bg-sky-50 w-8 shrink-0">
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                title="展开左侧栏"
+                class="px-1 py-3 border border-black bg-white hover:bg-sky-200 text-[10px] font-mono cursor-pointer writing-vertical"
+              >
+                展开侧栏
+              </button>
+            </div>
+          }
         >
-          <div class="space-y-4">
-            {/* Requirement 3: Normal users ONLY see "私人" and "共享" spaces (no physical disks/paths) */}
-            <div>
-              <div class="text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
-                空间分类
+          <aside
+            style={{ width: `${sidebarWidth()}px` }}
+            class={`${
+              mobileMenuOpen() ? 'flex' : 'hidden'
+            } md:flex border-r border-black bg-white flex-col justify-between p-3 shrink-0 overflow-y-auto min-w-[160px] max-w-[540px]`}
+          >
+            <div class="space-y-4">
+              {/* Section 1: Space Categorization (Collapsible) */}
+              <div>
+                <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
+                  <span>空间分类</span>
+                  <button
+                    onClick={() => setShowSpaceSection(!showSpaceSection())}
+                    class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] cursor-pointer"
+                  >
+                    {showSpaceSection() ? '[-]' : '[+]'}
+                  </button>
+                </div>
+                <Show when={showSpaceSection()}>
+                  <div class="mt-2 grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => selectSpace('private')}
+                      class={`p-2 border border-black text-left cursor-pointer ${
+                        activeSpace() === 'private' && activeView() === 'files'
+                          ? 'bg-sky-100 font-bold'
+                          : 'bg-white hover:bg-sky-50'
+                      }`}
+                    >
+                      <div class="text-xs">私人空间</div>
+                      <div class="text-[10px] text-neutral-500 mt-0.5">个人加密隔离</div>
+                    </button>
+                    <button
+                      onClick={() => selectSpace('shared')}
+                      class={`p-2 border border-black text-left cursor-pointer ${
+                        activeSpace() === 'shared' && activeView() === 'files'
+                          ? 'bg-sky-100 font-bold'
+                          : 'bg-white hover:bg-sky-50'
+                      }`}
+                    >
+                      <div class="text-xs">共享空间</div>
+                      <div class="text-[10px] text-neutral-500 mt-0.5">团队协作共享</div>
+                    </button>
+                  </div>
+                </Show>
               </div>
-              <div class="mt-2 grid grid-cols-2 gap-1.5">
+
+              {/* Section 2: Collapsible Directory Tree (Requirement 1 & 2: No icons, Collapsible) */}
+              <div>
+                <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
+                  <span>路径目录树</span>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-[10px] font-mono text-neutral-500">
+                      {activeSpace() === 'private' ? '私人' : '共享'}
+                    </span>
+                    <button
+                      onClick={() => setShowTreeSection(!showTreeSection())}
+                      class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] cursor-pointer"
+                    >
+                      {showTreeSection() ? '[-]' : '[+]'}
+                    </button>
+                  </div>
+                </div>
+
+                <Show when={showTreeSection()}>
+                  <div class="mt-2 space-y-1 text-xs">
+                    <For each={folderTree().filter(isPathNodeVisible)}>
+                      {(dirPath) => {
+                        const depth = dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
+                        const folderName = dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
+                        const isSelected = () => currentPath() === dirPath && activeView() === 'files';
+                        const hasChildren = hasChildDirs(dirPath);
+                        const isCollapsed = collapsedPaths().has(dirPath);
+
+                        return (
+                          <div
+                            style={{ 'padding-left': `${depth * 14}px` }}
+                            class="flex items-center gap-1 w-full"
+                          >
+                            <Show
+                              when={hasChildren}
+                              fallback={
+                                <span class="inline-block w-4 text-center text-neutral-300 font-mono text-[10px] shrink-0">
+                                  -
+                                </span>
+                              }
+                            >
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleCollapsePath(dirPath);
+                                }}
+                                title={isCollapsed ? '展开子目录' : '折叠子目录'}
+                                class="px-1 py-0.5 border border-black bg-white hover:bg-sky-100 font-mono text-[10px] shrink-0 cursor-pointer"
+                              >
+                                {isCollapsed ? '[+]' : '[-]'}
+                              </button>
+                            </Show>
+
+                            <button
+                              onClick={() => {
+                                setActiveView('files');
+                                setCurrentPath(dirPath);
+                                setMobileMenuOpen(false);
+                              }}
+                              class={`flex-1 text-left py-1 px-1.5 border border-black truncate cursor-pointer ${
+                                isSelected()
+                                  ? 'bg-sky-100 font-semibold'
+                                  : 'bg-white hover:bg-sky-50'
+                              }`}
+                            >
+                              <span class="truncate">{folderName}</span>
+                            </button>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </div>
+
+            {/* Bottom Card: Quota Indicator & Collapse Sidebar Toggle */}
+            <div class="border-t border-black pt-3 space-y-2 mt-4">
+              <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider">
+                <span>存储配额</span>
                 <button
-                  onClick={() => selectSpace('private')}
-                  class={`p-2 border border-black text-left cursor-pointer ${
-                    activeSpace() === 'private' && activeView() === 'files'
-                      ? 'bg-sky-100 font-bold'
-                      : 'bg-white hover:bg-sky-50'
-                  }`}
+                  onClick={() => setSidebarCollapsed(true)}
+                  class="hidden md:inline-block px-1 py-0.5 border border-black bg-white hover:bg-sky-100 text-[10px] font-mono cursor-pointer"
+                  title="收起左侧栏"
                 >
-                  <div class="text-xs">🔒 私人空间</div>
-                  <div class="text-[10px] text-neutral-500 mt-0.5">个人加密隔离</div>
-                </button>
-                <button
-                  onClick={() => selectSpace('shared')}
-                  class={`p-2 border border-black text-left cursor-pointer ${
-                    activeSpace() === 'shared' && activeView() === 'files'
-                      ? 'bg-sky-100 font-bold'
-                      : 'bg-white hover:bg-sky-50'
-                  }`}
-                >
-                  <div class="text-xs">👥 共享空间</div>
-                  <div class="text-[10px] text-neutral-500 mt-0.5">团队协作共享</div>
+                  [收起]
                 </button>
               </div>
-            </div>
 
-            {/* Requirement 5: Left Path Navigation (左侧路径导航) */}
-            <div>
-              <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black">
-                <span>路径目录树</span>
-                <span class="text-[10px] font-mono text-neutral-500">
-                  {activeSpace() === 'private' ? '私人' : '共享'}
-                </span>
+              <div class="border border-black p-2 bg-sky-50/50 space-y-1.5 text-xs font-mono">
+                <div class="flex justify-between items-center text-[11px]">
+                  <span>已用:</span>
+                  <span class="font-bold">{formatBytes(user()?.used_bytes || 0)}</span>
+                </div>
+                <div class="flex justify-between items-center text-[11px]">
+                  <span>配额:</span>
+                  <span>
+                    {isAdmin()
+                      ? '无限 (管理员)'
+                      : user()?.quota_bytes && user()!.quota_bytes! > 0
+                      ? formatBytes(user()!.quota_bytes!)
+                      : '0 B (需管理员授权)'}
+                  </span>
+                </div>
+                <div class="w-full h-2 border border-black bg-white overflow-hidden">
+                  <div
+                    class="h-full bg-black"
+                    style={{
+                      width: `${
+                        isAdmin()
+                          ? 10
+                          : user()?.quota_bytes && user()!.quota_bytes! > 0
+                          ? Math.min(100, Math.round(((user()?.used_bytes || 0) / user()!.quota_bytes!) * 100))
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
               </div>
-              <div class="mt-2 space-y-1 text-xs">
-                <For each={folderTree()}>
-                  {(dirPath) => {
-                    const depth = dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
-                    const folderName = dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
-                    const isSelected = () => currentPath() === dirPath && activeView() === 'files';
+            </div>
+          </aside>
+        </Show>
 
-                    return (
-                      <button
-                        onClick={() => {
-                          setActiveView('files');
-                          setCurrentPath(dirPath);
-                          setMobileMenuOpen(false);
-                        }}
-                        style={{ 'padding-left': `${8 + depth * 14}px` }}
-                        class={`w-full text-left py-1 pr-2 border border-black truncate cursor-pointer ${
-                          isSelected()
-                            ? 'bg-sky-100 font-semibold'
-                            : 'bg-white hover:bg-sky-50'
-                        }`}
-                      >
-                        <span class="mr-1.5 font-mono text-[10px]">📁</span>
-                        <span class="truncate">{folderName}</span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            </div>
-          </div>
-
-          {/* User Quota Indicator Card (Requirement 3: Default no quota, assigned by admin) */}
-          <div class="border-t border-black pt-3 space-y-2 mt-4">
-            <div class="text-[11px] font-bold uppercase tracking-wider">我的存储配额</div>
-            <div class="border border-black p-2 bg-sky-50/50 space-y-1.5 text-xs font-mono">
-              <div class="flex justify-between items-center text-[11px]">
-                <span>已使用:</span>
-                <span class="font-bold">{formatBytes(user()?.used_bytes || 0)}</span>
-              </div>
-              <div class="flex justify-between items-center text-[11px]">
-                <span>配额上限:</span>
-                <span>
-                  {isAdmin()
-                    ? '无限 (管理员)'
-                    : user()?.quota_bytes && user()!.quota_bytes! > 0
-                    ? formatBytes(user()!.quota_bytes!)
-                    : '无配额 (需管理员授权)'}
-                </span>
-              </div>
-              <div class="w-full h-2 border border-black bg-white overflow-hidden">
-                <div
-                  class="h-full bg-black"
-                  style={{
-                    width: `${
-                      isAdmin()
-                        ? 10
-                        : user()?.quota_bytes && user()!.quota_bytes! > 0
-                        ? Math.min(100, Math.round(((user()?.used_bytes || 0) / user()!.quota_bytes!) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-            <div class="text-[10px] text-neutral-500 font-mono">
-              P2P 穿透优先 · Cloudflare 中继兜底
-            </div>
-          </div>
-        </aside>
+        {/* Draggable Divider between Left Sidebar and Right Main Area (Requirement 3) */}
+        <Show when={!sidebarCollapsed()}>
+          <div
+            onMouseDown={startResizeSidebar}
+            onDblClick={() => setSidebarWidth(240)}
+            class="hidden md:block w-1.5 hover:w-2 bg-neutral-300 hover:bg-sky-400 cursor-col-resize shrink-0 transition-colors select-none"
+            title="拖拽调整左侧栏宽度，双击恢复默认"
+          />
+        </Show>
 
         {/* Right Content Area */}
         <main class="flex-1 flex flex-col bg-white overflow-y-auto min-w-0">
@@ -657,33 +809,33 @@ export default function App() {
                   onClick={navigateUp}
                   class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer font-mono shrink-0"
                 >
-                  ↑ 上级
+                  上级
                 </button>
                 <span class="font-semibold px-2 py-0.5 border border-black bg-white">
-                  {activeSpace() === 'private' ? '🔒 私人空间' : '👥 共享空间'}
+                  {activeSpace() === 'private' ? '私人空间' : '共享空间'}
                 </span>
                 <span class="px-2 py-0.5 bg-sky-100 border border-black font-mono truncate max-w-[200px] sm:max-w-xs">
                   {currentPath()}
                 </span>
               </div>
 
-              {/* Requirement 2: Upload Files & Upload Folder buttons */}
+              {/* Upload Files, Upload Folder, Create Folder */}
               <div class="flex flex-wrap items-center gap-1.5 text-xs">
                 <button
                   onClick={handleCreateFolder}
                   class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-medium cursor-pointer"
                 >
-                  + 新建文件夹
+                  新建文件夹
                 </button>
 
                 <label class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer">
-                  ↑ 上传文件
+                  上传文件
                   <input type="file" multiple onChange={handleFileUpload} class="hidden" />
                 </label>
 
                 {/* Requirement 2: Folder Upload */}
                 <label class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer">
-                  📁 上传文件夹
+                  上传文件夹
                   <input
                     type="file"
                     /* @ts-ignore */
@@ -704,7 +856,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Requirement 4: Upload progress bar for large relay chunked uploads */}
+            {/* Upload progress bar */}
             <Show when={uploadProgress() !== null}>
               <div class="border-b border-black bg-sky-100 px-4 py-1.5 text-xs flex items-center justify-between">
                 <span>{statusMessage()}</span>
@@ -712,16 +864,28 @@ export default function App() {
               </div>
             </Show>
 
-            {/* Flat File List */}
-            <div class="flex-1 p-3 sm:p-6">
-              <div class="border border-black">
-                {/* Desktop Table Header */}
-                <div class="hidden sm:grid sm:grid-cols-12 border-b border-black bg-sky-100 px-3 py-2 text-xs font-bold">
-                  <div class="col-span-5">名称</div>
-                  <div class="col-span-2">大小</div>
-                  <div class="col-span-2">BLAKE3 校验</div>
-                  <div class="col-span-2">修改时间</div>
-                  <div class="col-span-1 text-right">操作</div>
+            {/* Flat File List with Resizable Column Widths (Requirement 3) */}
+            <div class="flex-1 p-3 sm:p-6 overflow-x-auto">
+              <div class="border border-black min-w-[560px]">
+                {/* Desktop Resizable Table Header */}
+                <div class="hidden sm:flex border-b border-black bg-sky-100 text-xs font-bold items-center select-none">
+                  {/* Resizable Name Column Header */}
+                  <div
+                    style={{ width: `${nameColWidth()}px` }}
+                    class="relative p-2 shrink-0 flex items-center justify-between border-r border-black"
+                  >
+                    <span>名称</span>
+                    <div
+                      onMouseDown={startResizeNameCol}
+                      onDblClick={() => setNameColWidth(340)}
+                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
+                      title="拖拽调节列宽，双击复位"
+                    />
+                  </div>
+                  <div class="w-24 p-2 shrink-0 font-mono border-r border-black">大小</div>
+                  <div class="w-36 p-2 shrink-0 font-mono border-r border-black">BLAKE3 校验</div>
+                  <div class="w-36 p-2 shrink-0 font-mono border-r border-black">修改时间</div>
+                  <div class="flex-1 p-2 text-right">操作</div>
                 </div>
 
                 {/* Mobile Header */}
@@ -736,14 +900,18 @@ export default function App() {
                     <div class="p-8 text-center text-xs text-neutral-600">
                       {loadingFiles()
                         ? '正在读取目录...'
-                        : '当前目录为空，可点击上方「+ 新建文件夹」、「↑ 上传文件」或「📁 上传文件夹」。'}
+                        : '当前目录为空，可点击上方「新建文件夹」、「上传文件」或「上传文件夹」。'}
                     </div>
                   }
                 >
                   <For each={entries()}>
                     {(item) => (
-                      <div class="px-3 py-2 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:grid sm:grid-cols-12 sm:items-center gap-1.5 sm:gap-0">
-                        <div class="sm:col-span-5 flex items-center justify-between sm:justify-start gap-2 min-w-0">
+                      <div class="px-3 py-2 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:flex-row sm:items-center">
+                        {/* Resizable Name Column */}
+                        <div
+                          style={{ width: `${nameColWidth()}px` }}
+                          class="sm:shrink-0 flex items-center justify-between sm:justify-start gap-2 min-w-0 pr-2"
+                        >
                           <div class="flex items-center gap-2 min-w-0">
                             <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0">
                               {item.is_dir ? 'DIR' : 'FILE'}
@@ -780,7 +948,7 @@ export default function App() {
                         </div>
 
                         {/* Mobile Metadata Subtitle */}
-                        <div class="flex sm:hidden items-center gap-3 text-[11px] font-mono text-neutral-600">
+                        <div class="flex sm:hidden items-center gap-3 text-[11px] font-mono text-neutral-600 my-1">
                           <span>{item.is_dir ? '文件夹' : formatBytes(item.size_bytes)}</span>
                           <Show when={item.blake3_short}>
                             <span>BLAKE3:{item.blake3_short}</span>
@@ -789,16 +957,16 @@ export default function App() {
                         </div>
 
                         {/* Desktop Columns */}
-                        <div class="hidden sm:block sm:col-span-2 font-mono">
+                        <div class="hidden sm:block w-24 shrink-0 font-mono px-2">
                           {item.is_dir ? '-' : formatBytes(item.size_bytes)}
                         </div>
-                        <div class="hidden sm:block sm:col-span-2 font-mono text-[11px] text-neutral-600 truncate">
+                        <div class="hidden sm:block w-36 shrink-0 font-mono text-[11px] text-neutral-600 truncate px-2">
                           {item.blake3_short || '-'}
                         </div>
-                        <div class="hidden sm:block sm:col-span-2 font-mono text-[11px]">
+                        <div class="hidden sm:block w-36 shrink-0 font-mono text-[11px] px-2">
                           {formatTime(item.modified_unix)}
                         </div>
-                        <div class="hidden sm:flex sm:col-span-1 justify-end gap-1.5">
+                        <div class="hidden sm:flex flex-1 justify-end gap-1.5 px-2">
                           {/* Requirement 2: Directory downloads as ZIP, File downloads directly */}
                           <a
                             href={getDownloadUrl(activeSpace(), item.rel_path)}
@@ -806,7 +974,7 @@ export default function App() {
                             class="px-1.5 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] shrink-0"
                             title={item.is_dir ? '打包下载整个文件夹为 ZIP 压缩包' : '下载文件'}
                           >
-                            {item.is_dir ? 'ZIP' : '下载'}
+                            {item.is_dir ? '下载(ZIP)' : '下载'}
                           </a>
                           <button
                             onClick={() => handleDelete(item)}
@@ -823,7 +991,7 @@ export default function App() {
             </div>
           </Show>
 
-          {/* View 2: User Quota Management (Admin Only - Requirement 3) */}
+          {/* View 2: User Quota Management (Admin Only) */}
           <Show when={activeView() === 'users' && isAdmin()}>
             <div class="p-4 sm:p-6 space-y-4 max-w-4xl">
               <div class="flex items-center justify-between border-b border-black pb-2">
@@ -901,7 +1069,7 @@ export default function App() {
             </div>
           </Show>
 
-          {/* View 3: Transfer Logs (Requirement 4) */}
+          {/* View 3: Transfer Logs */}
           <Show when={activeView() === 'transfers'}>
             <div class="p-4 sm:p-6 space-y-4 max-w-5xl">
               <div class="flex items-center justify-between border-b border-black pb-2">
@@ -1001,7 +1169,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Requirement 1: Storage Pools List */}
+              {/* Storage Pools List */}
               <section class="border border-black p-3 space-y-3">
                 <div class="flex items-center justify-between bg-sky-100 px-2 py-1 border-b border-black text-xs font-bold">
                   <span>NAS 物理硬盘挂载池</span>
@@ -1098,13 +1266,13 @@ export default function App() {
           <footer class="border-t border-black px-3 py-1.5 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 bg-white text-[11px] font-mono mt-auto">
             <div class="truncate">状态: {statusMessage()}</div>
             <div class="text-neutral-600 truncate">
-              {activeSpace() === 'private' ? '🔒 私人空间' : '👥 共享空间'} · 通道: {transportChannel()}
+              {activeSpace() === 'private' ? '私人空间' : '共享空间'} · 通道: {transportChannel()}
             </div>
           </footer>
         </main>
       </div>
 
-      {/* Requirement 1: Initial Disk Configuration Wizard Modal (Admin) */}
+      {/* Initial Disk Setup Modal */}
       <Show when={showInitDiskModal()}>
         <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
           <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4">
