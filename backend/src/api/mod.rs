@@ -176,10 +176,10 @@ fn extract_user(headers: &HeaderMap, secret: &str) -> UserClaims {
         }
     }
     UserClaims {
-        sub: "usr_admin_default".into(),
-        email: "admin@mayadesk.local".into(),
-        display_name: "Admin".into(),
-        role: "admin".into(),
+        sub: "usr_guest".into(),
+        email: "guest@mayadesk.local".into(),
+        display_name: "访客".into(),
+        role: "guest".into(),
         exp: usize::MAX,
     }
 }
