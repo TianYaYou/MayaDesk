@@ -17,12 +17,16 @@ import {
   apiInitDisk,
   apiGetSystemConfig,
   apiSaveSystemConfig,
+  apiBrowseServerFs,
+  apiCreateServerFsDir,
   type DiskMountSummary,
   type VfsFileEntry,
   type FullAppConfig,
   type UserProfile,
   type UserRecord,
   type TransferLogRecord,
+  type FsDirectoryItem,
+  type FsBreadcrumb,
 } from './services/api';
 import { HybridTransportManager, type TransportChannel } from './services/p2pTransport';
 
@@ -96,6 +100,65 @@ export default function App() {
 
   // System Configuration (Admin Only)
   const [sysConfig, setSysConfig] = createSignal<FullAppConfig | null>(null);
+
+  // Physical Path Manager State (Admin only, starts from root '/')
+  const [showFsExplorerModal, setShowFsExplorerModal] = createSignal(false);
+  const [fsCurrentPath, setFsCurrentPath] = createSignal('/');
+  const [fsParentPath, setFsParentPath] = createSignal<string | null>(null);
+  const [fsBreadcrumbs, setFsBreadcrumbs] = createSignal<FsBreadcrumb[]>([]);
+  const [fsDirs, setFsDirs] = createSignal<FsDirectoryItem[]>([]);
+  const [fsLoading, setFsLoading] = createSignal(false);
+  const [fsError, setFsError] = createSignal<string | null>(null);
+  const [fsInputPath, setFsInputPath] = createSignal('/');
+  const [showFsMkdirInput, setShowFsMkdirInput] = createSignal(false);
+  const [fsNewFolderName, setFsNewFolderName] = createSignal('');
+
+  const openFsExplorer = async (initialPath?: string) => {
+    setShowFsExplorerModal(true);
+    setShowFsMkdirInput(false);
+    setFsNewFolderName('');
+    const startPath =
+      initialPath && initialPath.trim().startsWith('/') ? initialPath.trim() : '/';
+    await loadFsDirectory(startPath);
+  };
+
+  const loadFsDirectory = async (path: string) => {
+    setFsLoading(true);
+    setFsError(null);
+    try {
+      const res = await apiBrowseServerFs(path, token());
+      setFsCurrentPath(res.current_path);
+      setFsParentPath(res.parent_path);
+      setFsBreadcrumbs(res.breadcrumbs);
+      setFsDirs(res.directories);
+      setFsInputPath(res.current_path);
+    } catch (err: any) {
+      setFsError(err?.message || '无法读取服务器目录');
+    } finally {
+      setFsLoading(false);
+    }
+  };
+
+  const handleFsSelectPath = (selectedPath: string) => {
+    setInitMountPath(selectedPath);
+    setShowFsExplorerModal(false);
+    setShowInitDiskModal(true);
+    setStatusMessage(`已选取服务器物理路径: ${selectedPath}`);
+  };
+
+  const handleFsCreateSubdir = async () => {
+    const name = fsNewFolderName().trim();
+    if (!name) return;
+    try {
+      const res = await apiCreateServerFsDir(fsCurrentPath(), name, token());
+      setShowFsMkdirInput(false);
+      setFsNewFolderName('');
+      await loadFsDirectory(res.path);
+      setStatusMessage(`已创建服务器目录: ${res.path}`);
+    } catch (err: any) {
+      setFsError(err?.message || '创建目录失败');
+    }
+  };
 
   const isAdmin = () => user()?.role === 'admin';
 
@@ -1173,12 +1236,20 @@ export default function App() {
               <section class="border border-black p-3 space-y-3">
                 <div class="flex items-center justify-between bg-sky-100 px-2 py-1 border-b border-black text-xs font-bold">
                   <span>NAS 物理硬盘挂载池</span>
-                  <button
-                    onClick={() => setShowInitDiskModal(true)}
-                    class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer"
-                  >
-                    + 添加新存储盘
-                  </button>
+                  <div class="flex items-center gap-2">
+                    <button
+                      onClick={() => openFsExplorer()}
+                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer"
+                    >
+                      物理路径管理器
+                    </button>
+                    <button
+                      onClick={() => setShowInitDiskModal(true)}
+                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer"
+                    >
+                      + 添加新存储盘
+                    </button>
+                  </div>
                 </div>
 
                 <div class="space-y-2">
@@ -1294,15 +1365,33 @@ export default function App() {
               </p>
 
               <label class="block space-y-1">
-                <span class="font-medium">存储盘物理路径 (必填)</span>
-                <input
-                  type="text"
-                  required
-                  placeholder="例如：/data/storage 或 /mnt/nas_disk"
-                  value={initMountPath()}
-                  onInput={(e) => setInitMountPath(e.currentTarget.value)}
-                  class="w-full px-2.5 py-1.5 border border-black font-mono bg-white"
-                />
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">存储盘物理路径 (必填)</span>
+                  <button
+                    type="button"
+                    onClick={() => openFsExplorer(initMountPath())}
+                    class="px-2 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] font-semibold cursor-pointer"
+                  >
+                    从根目录 (/) 浏览服务器路径...
+                  </button>
+                </div>
+                <div class="flex gap-1.5">
+                  <input
+                    type="text"
+                    required
+                    placeholder="例如：/data/storage 或 /mnt/nas_disk"
+                    value={initMountPath()}
+                    onInput={(e) => setInitMountPath(e.currentTarget.value)}
+                    class="flex-1 px-2.5 py-1.5 border border-black font-mono bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openFsExplorer(initMountPath())}
+                    class="px-2.5 py-1.5 border border-black bg-sky-50 hover:bg-sky-100 text-xs font-semibold cursor-pointer shrink-0"
+                  >
+                    浏览选择
+                  </button>
+                </div>
               </label>
 
               <label class="block space-y-1">
@@ -1348,6 +1437,256 @@ export default function App() {
                 保存并初始化存储空间
               </button>
             </form>
+          </div>
+        </div>
+      </Show>
+
+      {/* Physical Path Manager Modal (Starts from root '/') */}
+      <Show when={showFsExplorerModal()}>
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-3 sm:p-6 z-[60]">
+          <div class="w-full max-w-3xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[90vh] space-y-3 shadow-2xl">
+            {/* Header */}
+            <div class="flex items-center justify-between border-b border-black pb-2">
+              <div>
+                <h3 class="font-bold text-sm">服务器物理路径管理器 (根目录 /)</h3>
+                <p class="text-[11px] text-neutral-600">
+                  浏览服务器物理磁盘目录结构，可创建子目录并一键选择作为存储挂载路径。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFsExplorerModal(false)}
+                class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer font-medium"
+              >
+                关闭
+              </button>
+            </div>
+
+            {/* Path Jump & Actions Bar */}
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <div class="flex flex-1 min-w-[240px] items-center border border-black bg-neutral-50 px-2 py-1">
+                <span class="text-neutral-500 font-mono mr-1.5 shrink-0">路径:</span>
+                <input
+                  type="text"
+                  value={fsInputPath()}
+                  onInput={(e) => setFsInputPath(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      loadFsDirectory(fsInputPath());
+                    }
+                  }}
+                  class="flex-1 bg-transparent font-mono text-xs focus:outline-none"
+                  placeholder="/"
+                />
+                <button
+                  type="button"
+                  onClick={() => loadFsDirectory(fsInputPath())}
+                  class="ml-1 px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
+                >
+                  跳转
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!fsParentPath() || fsCurrentPath() === '/'}
+                onClick={() => fsParentPath() && loadFsDirectory(fsParentPath()!)}
+                class={`px-2.5 py-1 border border-black text-xs cursor-pointer ${
+                  !fsParentPath() || fsCurrentPath() === '/'
+                    ? 'bg-neutral-100 text-neutral-400 border-neutral-300 cursor-not-allowed'
+                    : 'bg-white hover:bg-sky-100'
+                }`}
+              >
+                [上级目录]
+              </button>
+
+              <button
+                type="button"
+                onClick={() => loadFsDirectory(fsCurrentPath())}
+                class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+              >
+                [刷新]
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFsMkdirInput(!showFsMkdirInput())}
+                class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+              >
+                {showFsMkdirInput() ? '[- 取消新建]' : '[+ 新建子目录]'}
+              </button>
+            </div>
+
+            {/* Breadcrumb Navigation Bar */}
+            <div class="flex items-center gap-1 overflow-x-auto text-xs py-1.5 border-y border-neutral-200 bg-sky-50 px-2 font-mono">
+              <span class="text-neutral-500 font-sans text-[11px] shrink-0">位置:</span>
+              <For each={fsBreadcrumbs()}>
+                {(crumb, idx) => (
+                  <div class="flex items-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => loadFsDirectory(crumb.path)}
+                      class={`px-1.5 py-0.5 hover:bg-sky-200 cursor-pointer ${
+                        crumb.path === fsCurrentPath()
+                          ? 'font-bold bg-sky-200 underline'
+                          : 'text-neutral-800'
+                      }`}
+                    >
+                      {crumb.name}
+                    </button>
+                    <Show when={idx() < fsBreadcrumbs().length - 1}>
+                      <span class="text-neutral-400 mx-0.5">/</span>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+
+            {/* Inline Subdir Creation Bar */}
+            <Show when={showFsMkdirInput()}>
+              <div class="p-2 border border-black bg-sky-100 flex items-center gap-2 text-xs">
+                <span class="font-medium shrink-0">在当前路径下新建目录:</span>
+                <input
+                  type="text"
+                  placeholder="输入子目录名称 (如: nas_storage)"
+                  value={fsNewFolderName()}
+                  onInput={(e) => setFsNewFolderName(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleFsCreateSubdir();
+                    }
+                  }}
+                  class="flex-1 px-2 py-1 border border-black bg-white font-mono"
+                  autofocus
+                />
+                <button
+                  type="button"
+                  onClick={handleFsCreateSubdir}
+                  class="px-3 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer shrink-0"
+                >
+                  创建并进入
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFsMkdirInput(false)}
+                  class="px-2 py-1 border border-black bg-white hover:bg-neutral-100 cursor-pointer shrink-0"
+                >
+                  取消
+                </button>
+              </div>
+            </Show>
+
+            {/* Error Message if any */}
+            <Show when={fsError()}>
+              <div class="p-2 border border-red-500 bg-red-50 text-red-700 text-xs font-mono">
+                错误: {fsError()}
+              </div>
+            </Show>
+
+            {/* Directory List Container */}
+            <div class="flex-1 overflow-y-auto border border-black bg-white min-h-[220px] max-h-[360px]">
+              <Show
+                when={!fsLoading()}
+                fallback={<div class="p-8 text-center text-xs text-neutral-500 font-mono">正在读取服务器物理目录...</div>}
+              >
+                <Show
+                  when={fsDirs().length > 0}
+                  fallback={
+                    <div class="p-8 text-center text-xs text-neutral-500 space-y-2">
+                      <p>当前目录下没有子目录。</p>
+                      <p class="text-[11px] text-neutral-400">
+                        您可以点击上方 [+ 新建子目录] 在此创建，或直接点击下方按钮选取当前目录作为存储盘。
+                      </p>
+                    </div>
+                  }
+                >
+                  <table class="w-full text-left text-xs border-collapse">
+                    <thead class="sticky top-0 bg-neutral-100 border-b border-black font-semibold text-[11px]">
+                      <tr>
+                        <th class="py-1.5 px-3">子目录名称</th>
+                        <th class="py-1.5 px-3">完整路径</th>
+                        <th class="py-1.5 px-3 w-20">访问权限</th>
+                        <th class="py-1.5 px-3 w-36 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-neutral-200 font-mono">
+                      <For each={fsDirs()}>
+                        {(dir) => (
+                          <tr class="hover:bg-sky-50 transition-colors">
+                            <td class="py-1.5 px-3 font-semibold text-black">
+                              <button
+                                type="button"
+                                onClick={() => loadFsDirectory(dir.path)}
+                                class="text-left hover:underline cursor-pointer flex items-center gap-1.5"
+                              >
+                                <span class="text-neutral-500 font-normal">[目录]</span>
+                                <span class="font-bold">{dir.name}</span>
+                              </button>
+                            </td>
+                            <td class="py-1.5 px-3 text-neutral-600 truncate max-w-[240px]">
+                              {dir.path}
+                            </td>
+                            <td class="py-1.5 px-3 text-[11px]">
+                              <span
+                                class={`px-1.5 py-0.5 border ${
+                                  dir.is_readable
+                                    ? 'border-neutral-300 bg-neutral-100 text-neutral-700'
+                                    : 'border-red-300 bg-red-50 text-red-600'
+                                }`}
+                              >
+                                {dir.is_readable ? '可读' : '受限'}
+                              </span>
+                            </td>
+                            <td class="py-1.5 px-3 text-right space-x-1 font-sans">
+                              <button
+                                type="button"
+                                onClick={() => loadFsDirectory(dir.path)}
+                                class="px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
+                              >
+                                进入
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleFsSelectPath(dir.path)}
+                                class="px-2 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-semibold text-[11px] cursor-pointer"
+                              >
+                                选取
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </Show>
+              </Show>
+            </div>
+
+            {/* Footer with Select Current Path Action */}
+            <div class="border-t border-black pt-3 flex flex-wrap items-center justify-between gap-3">
+              <div class="text-xs">
+                <span class="text-neutral-500">当前定位路径: </span>
+                <span class="font-mono font-bold text-sky-800">{fsCurrentPath()}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFsExplorerModal(false)}
+                  class="px-3 py-1.5 border border-black bg-white hover:bg-neutral-100 text-xs cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFsSelectPath(fsCurrentPath())}
+                  class="px-4 py-1.5 border-2 border-black bg-sky-200 hover:bg-sky-300 font-bold text-xs cursor-pointer"
+                >
+                  选取此路径作为物理存储盘: {fsCurrentPath()}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </Show>

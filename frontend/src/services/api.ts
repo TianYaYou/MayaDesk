@@ -399,3 +399,56 @@ export async function apiSaveSystemConfig(
     throw new Error(data.error || '保存系统配置失败');
   }
 }
+
+export interface FsDirectoryItem {
+  name: string;
+  path: string;
+  is_readable: boolean;
+}
+
+export interface FsBreadcrumb {
+  name: string;
+  path: string;
+}
+
+export interface FsBrowseResult {
+  current_path: string;
+  parent_path: string | null;
+  breadcrumbs: FsBreadcrumb[];
+  directories: FsDirectoryItem[];
+}
+
+export async function apiBrowseServerFs(
+  path: string = '/',
+  token?: string | null
+): Promise<FsBrowseResult> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${API_BASE}/admin/fs/browse?${params.toString()}`, {
+    headers: getAuthHeaders(token),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '无法读取服务器物理目录');
+  }
+  return res.json();
+}
+
+export async function apiCreateServerFsDir(
+  parentPath: string,
+  folderName: string,
+  token?: string | null
+): Promise<{ status: string; path: string }> {
+  const res = await fetch(`${API_BASE}/admin/fs/mkdir`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(token),
+    },
+    body: JSON.stringify({ parent_path: parentPath, folder_name: folderName }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '创建物理目录失败');
+  }
+  return res.json();
+}

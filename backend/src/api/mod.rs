@@ -122,6 +122,8 @@ pub async fn create_router(state: Arc<AppState>) -> Router {
         .route("/admin/users", get(list_users_handler))
         .route("/admin/users/:id/quota", put(update_user_quota_handler))
         .route("/admin/init-disk", post(init_disk_handler))
+        .route("/admin/fs/browse", get(admin_fs_browse_handler))
+        .route("/admin/fs/mkdir", post(admin_fs_mkdir_handler))
         // Storage & VFS File Operations (Folder upload/download, chunked relay)
         .route("/disks", get(list_disks_handler))
         .route("/files", get(list_files_handler))
@@ -540,6 +542,190 @@ async fn init_disk_handler(
     Ok(Json(json!({
         "status": "initialized",
         "created_pools": created_pools
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct FsBrowseQuery {
+    #[serde(default = "default_root_path")]
+    pub path: String,
+}
+
+fn default_root_path() -> String {
+    "/".into()
+}
+
+#[derive(Serialize)]
+pub struct FsDirectoryItem {
+    pub name: String,
+    pub path: String,
+    pub is_readable: bool,
+}
+
+#[derive(Serialize)]
+pub struct FsBreadcrumb {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct FsMkdirRequest {
+    pub parent_path: String,
+    pub folder_name: String,
+}
+
+/// Browse physical filesystem directories on server (Admin only)
+async fn admin_fs_browse_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<FsBrowseQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().await;
+    let user = extract_user(&headers, &cfg.auth.jwt_secret);
+    if user.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "需要管理员权限" }))));
+    }
+
+    let mut raw_path = query.path.trim().to_string();
+    if raw_path.is_empty() {
+        raw_path = "/".to_string();
+    }
+
+    let target_path = PathBuf::from(&raw_path);
+    if !target_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("路径不存在: {}", raw_path) })),
+        ));
+    }
+
+    if !target_path.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("该路径不是有效目录: {}", raw_path) })),
+        ));
+    }
+
+    // Canonicalize if possible to normalize symlinks and relative components
+    let norm_path = target_path
+        .canonicalize()
+        .unwrap_or(target_path.clone());
+    let norm_str = norm_path.to_string_lossy().to_string();
+
+    let parent_path = if norm_str == "/" {
+        None
+    } else {
+        norm_path.parent().map(|p| {
+            let s = p.to_string_lossy().to_string();
+            if s.is_empty() {
+                "/".to_string()
+            } else {
+                s
+            }
+        })
+    };
+
+    // Build breadcrumbs starting from root "/"
+    let mut breadcrumbs = Vec::new();
+    breadcrumbs.push(FsBreadcrumb {
+        name: "/".to_string(),
+        path: "/".to_string(),
+    });
+
+    if norm_str != "/" {
+        let parts: Vec<&str> = norm_str.split('/').filter(|s| !s.is_empty()).collect();
+        let mut accumulated = String::new();
+        for part in parts {
+            accumulated.push('/');
+            accumulated.push_str(part);
+            breadcrumbs.push(FsBreadcrumb {
+                name: part.to_string(),
+                path: accumulated.clone(),
+            });
+        }
+    }
+
+    // Read entries
+    let mut directories = Vec::new();
+    match fs::read_dir(&norm_path) {
+        Ok(entries) => {
+            for entry_res in entries {
+                if let Ok(entry) = entry_res {
+                    let file_type = entry.file_type();
+                    let is_dir = file_type.as_ref().map(|t| t.is_dir()).unwrap_or(false)
+                        || (file_type.as_ref().map(|t| t.is_symlink()).unwrap_or(false)
+                            && entry.path().is_dir());
+                    if is_dir {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let full_p = entry.path().to_string_lossy().to_string();
+                        let readable = fs::read_dir(entry.path()).is_ok();
+                        directories.push(FsDirectoryItem {
+                            name,
+                            path: full_p,
+                            is_readable: readable,
+                        });
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": format!("读取目录失败: {}", e) })),
+            ));
+        }
+    }
+
+    // Sort directories alphabetically (case-insensitive)
+    directories.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    Ok(Json(json!({
+        "current_path": norm_str,
+        "parent_path": parent_path,
+        "breadcrumbs": breadcrumbs,
+        "directories": directories,
+    })))
+}
+
+/// Create physical directory under specified parent directory (Admin only)
+async fn admin_fs_mkdir_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<FsMkdirRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().await;
+    let user = extract_user(&headers, &cfg.auth.jwt_secret);
+    if user.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "需要管理员权限" }))));
+    }
+
+    let folder_name = req.folder_name.trim();
+    if folder_name.is_empty() || folder_name.contains('/') || folder_name.contains('\\') || folder_name == ".." || folder_name == "." {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "无效的目录名称" })),
+        ));
+    }
+
+    let parent = Path::new(&req.parent_path);
+    if !parent.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父目录不存在或不是目录" })),
+        ));
+    }
+
+    let target_dir = parent.join(folder_name);
+    fs::create_dir_all(&target_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("创建目录失败: {}", e) })),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "status": "success",
+        "path": target_dir.to_string_lossy().to_string()
     })))
 }
 
