@@ -70,6 +70,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = createSignal<string>('就绪');
   const [uploadProgress, setUploadProgress] = createSignal<number | null>(null);
 
+  // Animation key counter to trigger smooth fade/slide transition on space/path switch
+  const [listAnimKey, setListAnimKey] = createSignal(0);
+
   // Collapsible Directory Tree state — using immutable string[] so SolidJS tracks every toggle & tree update
   const [collapsedPaths, setCollapsedPaths] = createSignal<string[]>([]);
   const [showSpaceSection, setShowSpaceSection] = createSignal(true);
@@ -301,6 +304,7 @@ export default function App() {
     try {
       const list = await apiListFiles(space, path, token());
       setEntries(list);
+      setListAnimKey((k) => k + 1);
       const spaceLabel = space === 'private' ? '私人空间' : '共享空间';
       setStatusMessage(`已加载 ${list.length} 项 (${spaceLabel}:${path})`);
     } catch (err: any) {
@@ -375,7 +379,7 @@ export default function App() {
     }
   });
 
-  // Reactive Tree Helpers (Fixes expand/collapse update bugs including root '/' and child folder updates)
+  // Reactive Tree Helpers (Supports animated node expand/collapse)
   const isPathCollapsed = (path: string): boolean => collapsedPaths().includes(path);
 
   const toggleCollapsePath = (path: string) => {
@@ -401,22 +405,19 @@ export default function App() {
     return folderTree().some((p) => p !== path && p.startsWith(prefix));
   };
 
-  const visibleFolderTree = () => {
+  const isTreeNodeVisible = (path: string): boolean => {
+    if (path === '/') return true;
     const collapsed = collapsedPaths();
-    const allPaths = folderTree();
-    return allPaths.filter((path) => {
-      if (path === '/') return true;
-      if (collapsed.includes('/')) return false;
-      const parts = path.split('/').filter(Boolean);
-      let cur = '';
-      for (let i = 0; i < parts.length - 1; i++) {
-        cur += '/' + parts[i];
-        if (collapsed.includes(cur)) {
-          return false;
-        }
+    if (collapsed.includes('/')) return false;
+    const parts = path.split('/').filter(Boolean);
+    let cur = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur += '/' + parts[i];
+      if (collapsed.includes(cur)) {
+        return false;
       }
-      return true;
-    });
+    }
+    return true;
   };
 
   // Draggable Left Sidebar Resizer
@@ -679,12 +680,12 @@ export default function App() {
 
   return (
     <div class="min-h-screen flex flex-col bg-white text-black text-sm select-text">
-      {/* Top Header Bar — Clean Minimalist Flat Style */}
+      {/* Top Header Bar — Clean Minimalist Flat Style with Tab Switch Transitions */}
       <header class="border-b border-black px-3 py-2 md:px-4 md:h-12 flex flex-wrap items-center justify-between gap-2 bg-white">
         <div class="flex items-center gap-2 md:gap-4">
           <button
             onClick={() => setMobileMenuOpen((v) => !v)}
-            class="md:hidden px-2 py-1 border border-black bg-sky-100 text-black text-xs font-bold cursor-pointer"
+            class="md:hidden px-2 py-1 border border-black bg-sky-100 text-black text-xs font-bold cursor-pointer transition-colors duration-150"
           >
             {mobileMenuOpen() ? '关闭目录' : '目录导航'}
           </button>
@@ -697,7 +698,7 @@ export default function App() {
           <nav class="flex items-center border border-black">
             <button
               onClick={() => setActiveView('files')}
-              class={`px-2.5 py-1 text-xs font-medium cursor-pointer ${
+              class={`px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors duration-150 ${
                 activeView() === 'files'
                   ? 'bg-sky-100 text-black font-semibold'
                   : 'bg-white text-black hover:bg-sky-50'
@@ -708,7 +709,7 @@ export default function App() {
             <Show when={isAdmin()}>
               <button
                 onClick={() => setActiveView('users')}
-                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer ${
+                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer transition-colors duration-150 ${
                   activeView() === 'users'
                     ? 'bg-sky-100 text-black font-semibold'
                     : 'bg-white text-black hover:bg-sky-50'
@@ -718,7 +719,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveView('transfers')}
-                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer ${
+                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer transition-colors duration-150 ${
                   activeView() === 'transfers'
                     ? 'bg-sky-100 text-black font-semibold'
                     : 'bg-white text-black hover:bg-sky-50'
@@ -728,7 +729,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveView('settings')}
-                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer ${
+                class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer transition-colors duration-150 ${
                   activeView() === 'settings'
                     ? 'bg-sky-100 text-black font-semibold'
                     : 'bg-white text-black hover:bg-sky-50'
@@ -747,7 +748,7 @@ export default function App() {
               setTransportChannel((c) => (c === 'p2p-lan' ? 'cf-tunnel-web' : 'p2p-lan'))
             }
             title="点击切换 P2P 直连 / 服务器中继模式"
-            class="px-2 py-1 border border-black bg-sky-100 text-black font-mono cursor-pointer text-[11px] md:text-xs"
+            class="px-2 py-1 border border-black bg-sky-100 text-black font-mono cursor-pointer text-[11px] md:text-xs transition-colors duration-150"
           >
             {transportChannel() === 'p2p-lan' ? `P2P:${rttMs()}ms` : `中继模式`}
           </button>
@@ -757,7 +758,7 @@ export default function App() {
             fallback={
               <button
                 onClick={() => setShowAuthModal(true)}
-                class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 text-black cursor-pointer text-[11px] md:text-xs font-semibold"
+                class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 text-black cursor-pointer text-[11px] md:text-xs font-semibold transition-colors duration-150"
               >
                 登录 / 注册
               </button>
@@ -769,7 +770,7 @@ export default function App() {
               </span>
               <button
                 onClick={handleLogout}
-                class="px-1.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+                class="px-1.5 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer transition-colors duration-150"
               >
                 退出
               </button>
@@ -780,14 +781,14 @@ export default function App() {
 
       {/* Deployment Banner for Admin when no storage pool is configured */}
       <Show when={disks().length === 0 && isAdmin()}>
-        <div class="bg-amber-100 border-b border-black p-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div class="bg-amber-100 border-b border-black p-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 md-view-animate">
           <div>
             <span class="font-bold">[提示] 存储空间尚未初始化：</span>
             <span>当前系统尚未挂载任何物理存储盘，文件服务暂不可用。</span>
           </div>
           <button
             onClick={() => setShowInitDiskModal(true)}
-            class="px-3 py-1 border border-black bg-amber-300 hover:bg-amber-400 font-bold cursor-pointer shrink-0"
+            class="px-3 py-1 border border-black bg-amber-300 hover:bg-amber-400 font-bold cursor-pointer shrink-0 transition-colors duration-150"
           >
             立即配置初始存储盘
           </button>
@@ -796,16 +797,16 @@ export default function App() {
 
       {/* Main Workspace (Left Path & Space Tree, Right Content) */}
       <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        {/* Left Sidebar — Resizable & Collapsible */}
+        {/* Left Sidebar — Resizable & Animated Collapsible */}
         <Show
           when={!sidebarCollapsed()}
           fallback={
             /* Collapsed Slim Strip */
-            <div class="hidden md:flex flex-col items-center py-3 border-r border-black bg-sky-50 w-8 shrink-0">
+            <div class="hidden md:flex flex-col items-center py-3 border-r border-black bg-sky-50 w-8 shrink-0 md-view-animate">
               <button
                 onClick={() => setSidebarCollapsed(false)}
                 title="展开左侧栏"
-                class="px-1 py-2 text-neutral-700 hover:text-black text-xs font-bold cursor-pointer"
+                class="px-1 py-2 text-neutral-700 hover:text-black text-xs font-bold cursor-pointer transition-transform duration-150 hover:scale-110"
               >
                 »
               </button>
@@ -815,64 +816,75 @@ export default function App() {
           <aside
             style={{ width: `${sidebarWidth()}px` }}
             class={`${
-              mobileMenuOpen() ? 'flex' : 'hidden'
+              mobileMenuOpen() ? 'flex md-view-animate' : 'hidden'
             } md:flex border-r border-black bg-white flex-col justify-between p-3 shrink-0 overflow-y-auto min-w-[160px] max-w-[540px]`}
           >
             <div class="space-y-5">
-              {/* Section 1: Space Categorization — Clean Boxless Dropdown */}
+              {/* Section 1: Space Categorization — Smooth Accordion Expand/Collapse */}
               <div>
                 <button
                   type="button"
                   onClick={() => setShowSpaceSection((v) => !v)}
-                  class="w-full flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black cursor-pointer hover:text-sky-700 select-none"
+                  class="w-full flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black cursor-pointer hover:text-sky-700 select-none transition-colors duration-150"
                 >
                   <span class="flex items-center gap-1.5">
-                    <span class="inline-block w-3 text-left text-neutral-500 text-xs">
-                      {showSpaceSection() ? '▾' : '▸'}
+                    <span
+                      class={`md-chevron w-3 text-neutral-500 text-[10px] ${
+                        showSpaceSection() ? 'is-open' : ''
+                      }`}
+                    >
+                      ▸
                     </span>
                     <span>空间分类</span>
                   </span>
                 </button>
-                <Show when={showSpaceSection()}>
-                  <div class="mt-1.5 flex flex-col gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => selectSpace('private')}
-                      class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-colors ${
-                        activeSpace() === 'private' && activeView() === 'files'
-                          ? 'bg-sky-100 text-black font-bold border-l-2 border-black'
-                          : 'bg-white text-neutral-700 hover:bg-sky-50'
-                      }`}
-                    >
-                      <span class="text-xs">私人空间</span>
-                      <span class="text-[10px] text-neutral-500">个人隔离</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => selectSpace('shared')}
-                      class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-colors ${
-                        activeSpace() === 'shared' && activeView() === 'files'
-                          ? 'bg-sky-100 text-black font-bold border-l-2 border-black'
-                          : 'bg-white text-neutral-700 hover:bg-sky-50'
-                      }`}
-                    >
-                      <span class="text-xs">共享空间</span>
-                      <span class="text-[10px] text-neutral-500">团队共享</span>
-                    </button>
+
+                <div class={`md-collapse-grid ${showSpaceSection() ? '' : 'is-collapsed'}`}>
+                  <div class="md-collapse-inner">
+                    <div class="pt-1.5 flex flex-col gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => selectSpace('private')}
+                        class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-all duration-150 ${
+                          activeSpace() === 'private' && activeView() === 'files'
+                            ? 'bg-sky-100 text-black font-bold border-l-2 border-black pl-3'
+                            : 'bg-white text-neutral-700 hover:bg-sky-50 hover:pl-3'
+                        }`}
+                      >
+                        <span class="text-xs">私人空间</span>
+                        <span class="text-[10px] text-neutral-500">个人隔离</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => selectSpace('shared')}
+                        class={`w-full px-2.5 py-1.5 text-left cursor-pointer flex items-center justify-between transition-all duration-150 ${
+                          activeSpace() === 'shared' && activeView() === 'files'
+                            ? 'bg-sky-100 text-black font-bold border-l-2 border-black pl-3'
+                            : 'bg-white text-neutral-700 hover:bg-sky-50 hover:pl-3'
+                        }`}
+                      >
+                        <span class="text-xs">共享空间</span>
+                        <span class="text-[10px] text-neutral-500">团队共享</span>
+                      </button>
+                    </div>
                   </div>
-                </Show>
+                </div>
               </div>
 
-              {/* Section 2: Boxless Minimalist Directory Tree (Fixes reactive update bug + clean borderless rows) */}
+              {/* Section 2: Boxless Minimalist Directory Tree — Smooth Expand/Collapse & Chevron Rotation */}
               <div>
                 <div class="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider pb-1.5 border-b border-black select-none">
                   <button
                     type="button"
                     onClick={() => setShowTreeSection((v) => !v)}
-                    class="flex items-center gap-1.5 cursor-pointer hover:text-sky-700"
+                    class="flex items-center gap-1.5 cursor-pointer hover:text-sky-700 transition-colors duration-150"
                   >
-                    <span class="inline-block w-3 text-left text-neutral-500 text-xs">
-                      {showTreeSection() ? '▾' : '▸'}
+                    <span
+                      class={`md-chevron w-3 text-neutral-500 text-[10px] ${
+                        showTreeSection() ? 'is-open' : ''
+                      }`}
+                    >
+                      ▸
                     </span>
                     <span>路径目录树</span>
                   </button>
@@ -880,71 +892,87 @@ export default function App() {
                     type="button"
                     onClick={() => refreshFolderTree()}
                     title="刷新目录树"
-                    class="text-[10px] font-mono text-neutral-500 hover:text-black cursor-pointer"
+                    class="text-[10px] font-mono text-neutral-500 hover:text-black cursor-pointer transition-colors duration-150"
                   >
                     {activeSpace() === 'private' ? '私人' : '共享'} ↻
                   </button>
                 </div>
 
-                <Show when={showTreeSection()}>
-                  <div class="mt-1.5 flex flex-col gap-0.5 text-xs select-none">
-                    <For each={visibleFolderTree()}>
-                      {(dirPath) => {
-                        const depth =
-                          dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
-                        const folderName =
-                          dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
-                        const isSelected = () =>
-                          currentPath() === dirPath && activeView() === 'files';
+                <div class={`md-collapse-grid ${showTreeSection() ? '' : 'is-collapsed'}`}>
+                  <div class="md-collapse-inner">
+                    <div class="pt-1.5 flex flex-col text-xs select-none">
+                      <For each={folderTree()}>
+                        {(dirPath) => {
+                          const depth =
+                            dirPath === '/' ? 0 : dirPath.split('/').filter(Boolean).length;
+                          const folderName =
+                            dirPath === '/' ? '根目录 /' : dirPath.split('/').pop();
+                          const isSelected = () =>
+                            currentPath() === dirPath && activeView() === 'files';
 
-                        return (
-                          <div
-                            style={{ 'padding-left': `${depth * 14 + 4}px` }}
-                            class={`group flex items-center w-full py-1 pr-2 transition-colors ${
-                              isSelected()
-                                ? 'bg-sky-100 text-black font-semibold border-l-2 border-black'
-                                : 'text-neutral-700 hover:bg-sky-50 hover:text-black'
-                            }`}
-                          >
-                            <Show
-                              when={hasChildDirs(dirPath)}
-                              fallback={
-                                <span class="inline-block w-4 text-center text-neutral-300 text-xs shrink-0">
-                                  ·
-                                </span>
-                              }
+                          return (
+                            <div
+                              class={`md-tree-node ${
+                                isTreeNodeVisible(dirPath) ? '' : 'is-hidden-node'
+                              }`}
                             >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleCollapsePath(dirPath);
-                                }}
-                                title={isPathCollapsed(dirPath) ? '展开子目录' : '折叠子目录'}
-                                class="w-4 h-4 flex items-center justify-center text-neutral-500 hover:text-black text-xs shrink-0 cursor-pointer"
-                              >
-                                {isPathCollapsed(dirPath) ? '▸' : '▾'}
-                              </button>
-                            </Show>
+                              <div class="md-collapse-inner">
+                                <div
+                                  style={{ 'padding-left': `${depth * 14 + 4}px` }}
+                                  class={`group flex items-center w-full py-1 pr-2 transition-all duration-150 ${
+                                    isSelected()
+                                      ? 'bg-sky-100 text-black font-semibold border-l-2 border-black'
+                                      : 'text-neutral-700 hover:bg-sky-50 hover:text-black'
+                                  }`}
+                                >
+                                  <Show
+                                    when={hasChildDirs(dirPath)}
+                                    fallback={
+                                      <span class="inline-block w-4 text-center text-neutral-300 text-xs shrink-0">
+                                        ·
+                                      </span>
+                                    }
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleCollapsePath(dirPath);
+                                      }}
+                                      title={isPathCollapsed(dirPath) ? '展开子目录' : '折叠子目录'}
+                                      class="w-4 h-4 flex items-center justify-center text-neutral-500 hover:text-black text-[10px] shrink-0 cursor-pointer"
+                                    >
+                                      <span
+                                        class={`md-chevron ${
+                                          isPathCollapsed(dirPath) ? '' : 'is-open'
+                                        }`}
+                                      >
+                                        ▸
+                                      </span>
+                                    </button>
+                                  </Show>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveView('files');
-                                setCurrentPath(dirPath);
-                                expandAncestorsOf(dirPath);
-                                setMobileMenuOpen(false);
-                              }}
-                              class="flex-1 text-left pl-1 truncate cursor-pointer"
-                            >
-                              <span class="truncate">{folderName}</span>
-                            </button>
-                          </div>
-                        );
-                      }}
-                    </For>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveView('files');
+                                      setCurrentPath(dirPath);
+                                      expandAncestorsOf(dirPath);
+                                      setMobileMenuOpen(false);
+                                    }}
+                                    class="flex-1 text-left pl-1 truncate cursor-pointer"
+                                  >
+                                    <span class="truncate">{folderName}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }}
+                      </For>
+                    </div>
                   </div>
-                </Show>
+                </div>
               </div>
             </div>
 
@@ -954,7 +982,7 @@ export default function App() {
                 <span>存储配额</span>
                 <button
                   onClick={() => setSidebarCollapsed(true)}
-                  class="hidden md:inline-block text-[11px] text-neutral-500 hover:text-black font-normal cursor-pointer"
+                  class="hidden md:inline-block text-[11px] text-neutral-500 hover:text-black font-normal cursor-pointer transition-colors duration-150"
                   title="收起左侧栏"
                 >
                   « 收起
@@ -978,7 +1006,7 @@ export default function App() {
                 </div>
                 <div class="w-full h-1.5 border border-black bg-white overflow-hidden">
                   <div
-                    class="h-full bg-black"
+                    class="h-full bg-black transition-all duration-300"
                     style={{
                       width: `${
                         isAdmin()
@@ -1000,7 +1028,7 @@ export default function App() {
           <div
             onMouseDown={startResizeSidebar}
             onDblClick={() => setSidebarWidth(240)}
-            class="hidden md:block w-1 hover:w-1.5 bg-neutral-200 hover:bg-sky-400 cursor-col-resize shrink-0 transition-colors select-none"
+            class="hidden md:block w-1 hover:w-1.5 bg-neutral-200 hover:bg-sky-400 cursor-col-resize shrink-0 transition-all duration-150 select-none"
             title="拖拽调整左侧栏宽度，双击恢复默认"
           />
         </Show>
@@ -1009,314 +1037,318 @@ export default function App() {
         <main class="flex-1 flex flex-col bg-white overflow-y-auto min-w-0">
           {/* View 1: Files View (Default) */}
           <Show when={activeView() === 'files'}>
-            {/* Action & Path Toolbar */}
-            <div class="border-b border-black px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-sky-50/60">
-              <div class="flex flex-wrap items-center gap-1.5 text-xs min-w-0">
-                <button
-                  onClick={navigateUp}
-                  class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer font-mono shrink-0"
-                >
-                  上级
-                </button>
-                <span class="font-semibold px-2 py-0.5 border border-black bg-white">
-                  {activeSpace() === 'private' ? '私人空间' : '共享空间'}
-                </span>
-                <span class="px-2 py-0.5 bg-sky-100 border border-black font-mono truncate max-w-[200px] sm:max-w-xs">
-                  {currentPath()}
-                </span>
-              </div>
-
-              {/* Upload Files, Upload Folder, Create Folder */}
-              <div class="flex flex-wrap items-center gap-1.5 text-xs">
-                <button
-                  onClick={handleCreateFolder}
-                  class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-medium cursor-pointer"
-                >
-                  新建文件夹
-                </button>
-
-                <label class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer">
-                  上传文件
-                  <input type="file" multiple onChange={handleFileUpload} class="hidden" />
-                </label>
-
-                <label class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer">
-                  上传文件夹
-                  <input
-                    type="file"
-                    /* @ts-ignore */
-                    webkitdirectory
-                    directory
-                    multiple
-                    onChange={handleFolderUpload}
-                    class="hidden"
-                  />
-                </label>
-
-                <button
-                  onClick={() => {
-                    refreshDirectory();
-                    refreshFolderTree();
-                  }}
-                  class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer shrink-0"
-                >
-                  刷新
-                </button>
-              </div>
-            </div>
-
-            {/* Upload progress bar */}
-            <Show when={uploadProgress() !== null}>
-              <div class="border-b border-black bg-sky-100 px-4 py-1.5 text-xs flex items-center justify-between">
-                <span>{statusMessage()}</span>
-                <span class="font-mono font-bold">{uploadProgress()}%</span>
-              </div>
-            </Show>
-
-            {/* Flat File List with Multi-Column Resizable Widths */}
-            <div class="flex-1 p-3 sm:p-6 overflow-x-auto">
-              <div class="border border-black min-w-[620px]">
-                {/* Desktop Resizable Table Header (All data columns adjustable + double-click reset) */}
-                <div class="hidden sm:flex border-b border-black bg-sky-100 text-xs font-bold items-center select-none">
-                  {/* Resizable Column 1: Name */}
-                  <div
-                    style={{ width: `${colWidths().name}px` }}
-                    class="relative py-2 px-3 shrink-0 flex items-center justify-between border-r border-black"
+            <div class="flex-1 flex flex-col md-view-animate">
+              {/* Action & Path Toolbar */}
+              <div class="border-b border-black px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-sky-50/60">
+                <div class="flex flex-wrap items-center gap-1.5 text-xs min-w-0">
+                  <button
+                    onClick={navigateUp}
+                    class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer font-mono shrink-0 transition-colors duration-150"
                   >
-                    <span>名称</span>
-                    <div
-                      onMouseDown={(e) => startResizeCol('name', 160, 900, e)}
-                      onDblClick={() => resetColWidth('name', 340)}
-                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
-                      title="左右拖拽调整「名称」列宽，双击恢复默认"
-                    />
-                  </div>
-
-                  {/* Resizable Column 2: Size */}
-                  <div
-                    style={{ width: `${colWidths().size}px` }}
-                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
-                  >
-                    <span>大小</span>
-                    <div
-                      onMouseDown={(e) => startResizeCol('size', 72, 260, e)}
-                      onDblClick={() => resetColWidth('size', 105)}
-                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
-                      title="左右拖拽调整「大小」列宽，双击恢复默认"
-                    />
-                  </div>
-
-                  {/* Resizable Column 3: BLAKE3 Hash */}
-                  <div
-                    style={{ width: `${colWidths().hash}px` }}
-                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
-                  >
-                    <span>BLAKE3 校验</span>
-                    <div
-                      onMouseDown={(e) => startResizeCol('hash', 90, 320, e)}
-                      onDblClick={() => resetColWidth('hash', 150)}
-                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
-                      title="左右拖拽调整「BLAKE3 校验」列宽，双击恢复默认"
-                    />
-                  </div>
-
-                  {/* Resizable Column 4: Modified Time */}
-                  <div
-                    style={{ width: `${colWidths().mtime}px` }}
-                    class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
-                  >
-                    <span>修改时间</span>
-                    <div
-                      onMouseDown={(e) => startResizeCol('mtime', 110, 300, e)}
-                      onDblClick={() => resetColWidth('mtime', 150)}
-                      class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10"
-                      title="左右拖拽调整「修改时间」列宽，双击恢复默认"
-                    />
-                  </div>
-
-                  {/* Flexible Column 5: Actions */}
-                  <div class="flex-1 py-2 px-3 text-right min-w-[130px]">操作</div>
+                    上级
+                  </button>
+                  <span class="font-semibold px-2 py-0.5 border border-black bg-white transition-colors duration-150">
+                    {activeSpace() === 'private' ? '私人空间' : '共享空间'}
+                  </span>
+                  <span class="px-2 py-0.5 bg-sky-100 border border-black font-mono truncate max-w-[200px] sm:max-w-xs transition-all duration-150">
+                    {currentPath()}
+                  </span>
                 </div>
 
-                {/* Mobile Header */}
-                <div class="sm:hidden border-b border-black bg-sky-100 px-3 py-1.5 text-xs font-bold flex justify-between">
-                  <span>文件 / 目录列表</span>
-                  <span>操作</span>
-                </div>
+                {/* Upload Files, Upload Folder, Create Folder */}
+                <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                  <button
+                    onClick={handleCreateFolder}
+                    class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-medium cursor-pointer transition-colors duration-150"
+                  >
+                    新建文件夹
+                  </button>
 
-                <Show
-                  when={!loadingFiles() && entries().length > 0}
-                  fallback={
-                    <div class="p-8 text-center text-xs text-neutral-600">
-                      {loadingFiles()
-                        ? '正在读取目录...'
-                        : '当前目录为空，可点击上方「新建文件夹」、「上传文件」或「上传文件夹」。'}
+                  <label class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer transition-colors duration-150">
+                    上传文件
+                    <input type="file" multiple onChange={handleFileUpload} class="hidden" />
+                  </label>
+
+                  <label class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer transition-colors duration-150">
+                    上传文件夹
+                    <input
+                      type="file"
+                      /* @ts-ignore */
+                      webkitdirectory
+                      directory
+                      multiple
+                      onChange={handleFolderUpload}
+                      class="hidden"
+                    />
+                  </label>
+
+                  <button
+                    onClick={() => {
+                      refreshDirectory();
+                      refreshFolderTree();
+                    }}
+                    class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer shrink-0 transition-colors duration-150"
+                  >
+                    刷新
+                  </button>
+                </div>
+              </div>
+
+              {/* Upload progress bar */}
+              <Show when={uploadProgress() !== null}>
+                <div class="border-b border-black bg-sky-100 px-4 py-1.5 text-xs flex items-center justify-between md-view-animate">
+                  <span>{statusMessage()}</span>
+                  <span class="font-mono font-bold">{uploadProgress()}%</span>
+                </div>
+              </Show>
+
+              {/* Flat File List with Multi-Column Resizable Widths & Directory Switch Animation */}
+              <div class="flex-1 p-3 sm:p-6 overflow-x-auto">
+                <div class="border border-black min-w-[620px]">
+                  {/* Desktop Resizable Table Header */}
+                  <div class="hidden sm:flex border-b border-black bg-sky-100 text-xs font-bold items-center select-none">
+                    {/* Resizable Column 1: Name */}
+                    <div
+                      style={{ width: `${colWidths().name}px` }}
+                      class="relative py-2 px-3 shrink-0 flex items-center justify-between border-r border-black"
+                    >
+                      <span>名称</span>
+                      <div
+                        onMouseDown={(e) => startResizeCol('name', 160, 900, e)}
+                        onDblClick={() => resetColWidth('name', 340)}
+                        class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10 transition-colors"
+                        title="左右拖拽调整「名称」列宽，双击恢复默认"
+                      />
                     </div>
-                  }
-                >
-                  <For each={entries()}>
-                    {(item) => (
-                      <div class="px-3 sm:px-0 py-2 sm:py-0 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:flex-row sm:items-stretch">
-                        {/* Resizable Name Column */}
-                        <div
-                          style={{ width: `${colWidths().name}px` }}
-                          class="sm:shrink-0 sm:py-2 sm:px-3 sm:border-r sm:border-neutral-200 flex items-center justify-between sm:justify-start gap-2 min-w-0"
-                        >
-                          <div class="flex items-center gap-2 min-w-0">
-                            <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0 font-semibold">
-                              {item.is_dir ? 'DIR' : (() => {
-                                const cat = getFileCategory(item.name);
-                                switch (cat) {
-                                  case 'image': return 'IMG';
-                                  case 'video': return 'VID';
-                                  case 'audio': return 'AUD';
-                                  case 'pdf': return 'PDF';
-                                  case 'code': return 'CODE';
-                                  case 'archive': return 'ZIP';
-                                  default: return 'FILE';
-                                }
-                              })()}
-                            </span>
-                            <Show
-                              when={item.is_dir}
-                              fallback={
-                                getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other' ? (
+
+                    {/* Resizable Column 2: Size */}
+                    <div
+                      style={{ width: `${colWidths().size}px` }}
+                      class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                    >
+                      <span>大小</span>
+                      <div
+                        onMouseDown={(e) => startResizeCol('size', 72, 260, e)}
+                        onDblClick={() => resetColWidth('size', 105)}
+                        class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10 transition-colors"
+                        title="左右拖拽调整「大小」列宽，双击恢复默认"
+                      />
+                    </div>
+
+                    {/* Resizable Column 3: BLAKE3 Hash */}
+                    <div
+                      style={{ width: `${colWidths().hash}px` }}
+                      class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                    >
+                      <span>BLAKE3 校验</span>
+                      <div
+                        onMouseDown={(e) => startResizeCol('hash', 90, 320, e)}
+                        onDblClick={() => resetColWidth('hash', 150)}
+                        class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10 transition-colors"
+                        title="左右拖拽调整「BLAKE3 校验」列宽，双击恢复默认"
+                      />
+                    </div>
+
+                    {/* Resizable Column 4: Modified Time */}
+                    <div
+                      style={{ width: `${colWidths().mtime}px` }}
+                      class="relative py-2 px-2.5 shrink-0 flex items-center justify-between font-mono border-r border-black"
+                    >
+                      <span>修改时间</span>
+                      <div
+                        onMouseDown={(e) => startResizeCol('mtime', 110, 300, e)}
+                        onDblClick={() => resetColWidth('mtime', 150)}
+                        class="absolute -right-1 top-0 bottom-0 w-2.5 hover:bg-sky-400 cursor-col-resize z-10 transition-colors"
+                        title="左右拖拽调整「修改时间」列宽，双击恢复默认"
+                      />
+                    </div>
+
+                    {/* Flexible Column 5: Actions */}
+                    <div class="flex-1 py-2 px-3 text-right min-w-[130px]">操作</div>
+                  </div>
+
+                  {/* Mobile Header */}
+                  <div class="sm:hidden border-b border-black bg-sky-100 px-3 py-1.5 text-xs font-bold flex justify-between">
+                    <span>文件 / 目录列表</span>
+                    <span>操作</span>
+                  </div>
+
+                  <Show
+                    when={!loadingFiles() && entries().length > 0}
+                    fallback={
+                      <div class="p-8 text-center text-xs text-neutral-600 md-view-animate">
+                        {loadingFiles()
+                          ? '正在读取目录...'
+                          : '当前目录为空，可点击上方「新建文件夹」、「上传文件」或「上传文件夹」。'}
+                      </div>
+                    }
+                  >
+                    <div data-anim-key={listAnimKey()} class="md-view-animate">
+                      <For each={entries()}>
+                        {(item) => (
+                          <div class="px-3 sm:px-0 py-2 sm:py-0 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:flex-row sm:items-stretch transition-colors duration-150 md-row-animate">
+                            {/* Resizable Name Column */}
+                            <div
+                              style={{ width: `${colWidths().name}px` }}
+                              class="sm:shrink-0 sm:py-2 sm:px-3 sm:border-r sm:border-neutral-200 flex items-center justify-between sm:justify-start gap-2 min-w-0"
+                            >
+                              <div class="flex items-center gap-2 min-w-0">
+                                <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0 font-semibold">
+                                  {item.is_dir ? 'DIR' : (() => {
+                                    const cat = getFileCategory(item.name);
+                                    switch (cat) {
+                                      case 'image': return 'IMG';
+                                      case 'video': return 'VID';
+                                      case 'audio': return 'AUD';
+                                      case 'pdf': return 'PDF';
+                                      case 'code': return 'CODE';
+                                      case 'archive': return 'ZIP';
+                                      default: return 'FILE';
+                                    }
+                                  })()}
+                                </span>
+                                <Show
+                                  when={item.is_dir}
+                                  fallback={
+                                    getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other' ? (
+                                      <button
+                                        onClick={() => openPreview(item)}
+                                        class="text-left hover:underline hover:text-sky-800 cursor-pointer font-medium truncate transition-colors"
+                                        title="点击在线预览"
+                                      >
+                                        {item.name}
+                                      </button>
+                                    ) : (
+                                      <span class="font-medium truncate">{item.name}</span>
+                                    )
+                                  }
+                                >
                                   <button
-                                    onClick={() => openPreview(item)}
-                                    class="text-left hover:underline hover:text-sky-800 cursor-pointer font-medium truncate"
-                                    title="点击在线预览"
+                                    onClick={() => {
+                                      setCurrentPath(item.rel_path);
+                                      expandAncestorsOf(item.rel_path);
+                                    }}
+                                    class="text-left underline hover:bg-sky-100 cursor-pointer font-semibold truncate transition-colors"
                                   >
                                     {item.name}
                                   </button>
-                                ) : (
-                                  <span class="font-medium truncate">{item.name}</span>
-                                )
-                              }
+                                </Show>
+                              </div>
+
+                              {/* Mobile Action Buttons */}
+                              <div class="flex sm:hidden items-center gap-1.5 shrink-0">
+                                <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
+                                  <button
+                                    onClick={() => openPreview(item)}
+                                    class="px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
+                                  >
+                                    预览
+                                  </button>
+                                </Show>
+                                <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
+                                  <button
+                                    onClick={() => openExtractModal(item)}
+                                    class="px-2 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer"
+                                  >
+                                    解压
+                                  </button>
+                                </Show>
+                                <a
+                                  href={getDownloadUrl(activeSpace(), item.rel_path)}
+                                  target="_blank"
+                                  class="px-2 py-0.5 border border-black bg-sky-100 text-[11px]"
+                                >
+                                  {item.is_dir ? '下载(ZIP)' : '下载'}
+                                </a>
+                                <button
+                                  onClick={() => handleDelete(item)}
+                                  class="px-2 py-0.5 border border-black bg-white text-[11px] cursor-pointer"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Mobile Metadata Subtitle */}
+                            <div class="flex sm:hidden items-center gap-3 text-[11px] font-mono text-neutral-600 my-1">
+                              <span>{item.is_dir ? '文件夹' : formatBytes(item.size_bytes)}</span>
+                              <Show when={item.blake3_short}>
+                                <span>BLAKE3:{item.blake3_short}</span>
+                              </Show>
+                              <span>{formatTime(item.modified_unix)}</span>
+                            </div>
+
+                            {/* Desktop Resizable Columns */}
+                            <div
+                              style={{ width: `${colWidths().size}px` }}
+                              class="hidden sm:flex items-center shrink-0 font-mono py-2 px-2.5 border-r border-neutral-200 truncate"
                             >
-                              <button
-                                onClick={() => {
-                                  setCurrentPath(item.rel_path);
-                                  expandAncestorsOf(item.rel_path);
-                                }}
-                                class="text-left underline hover:bg-sky-100 cursor-pointer font-semibold truncate"
+                              {item.is_dir ? '-' : formatBytes(item.size_bytes)}
+                            </div>
+                            <div
+                              style={{ width: `${colWidths().hash}px` }}
+                              class="hidden sm:flex items-center shrink-0 font-mono text-[11px] text-neutral-600 py-2 px-2.5 border-r border-neutral-200 truncate"
+                            >
+                              {item.blake3_short || '-'}
+                            </div>
+                            <div
+                              style={{ width: `${colWidths().mtime}px` }}
+                              class="hidden sm:flex items-center shrink-0 font-mono text-[11px] py-2 px-2.5 border-r border-neutral-200 truncate"
+                            >
+                              {formatTime(item.modified_unix)}
+                            </div>
+                            <div class="hidden sm:flex flex-1 items-center justify-end gap-1.5 py-2 px-3 min-w-[130px]">
+                              {/* Online Preview Button */}
+                              <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
+                                <button
+                                  onClick={() => openPreview(item)}
+                                  class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0 transition-colors"
+                                  title="在线预览"
+                                >
+                                  预览
+                                </button>
+                              </Show>
+
+                              {/* Remote Extract Button */}
+                              <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
+                                <button
+                                  onClick={() => openExtractModal(item)}
+                                  class="px-1.5 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer shrink-0 transition-colors"
+                                  title="远程解压压缩包"
+                                >
+                                  解压
+                                </button>
+                              </Show>
+
+                              {/* Directory downloads as ZIP, File downloads directly */}
+                              <a
+                                href={getDownloadUrl(activeSpace(), item.rel_path)}
+                                target="_blank"
+                                class="px-1.5 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] shrink-0 transition-colors"
+                                title={item.is_dir ? '打包下载整个文件夹为 ZIP 压缩包' : '下载文件'}
                               >
-                                {item.name}
+                                {item.is_dir ? '下载(ZIP)' : '下载'}
+                              </a>
+                              <button
+                                onClick={() => handleDelete(item)}
+                                class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0 transition-colors"
+                              >
+                                删除
                               </button>
-                            </Show>
+                            </div>
                           </div>
-
-                          {/* Mobile Action Buttons */}
-                          <div class="flex sm:hidden items-center gap-1.5 shrink-0">
-                            <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
-                              <button
-                                onClick={() => openPreview(item)}
-                                class="px-2 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
-                              >
-                                预览
-                              </button>
-                            </Show>
-                            <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
-                              <button
-                                onClick={() => openExtractModal(item)}
-                                class="px-2 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer"
-                              >
-                                解压
-                              </button>
-                            </Show>
-                            <a
-                              href={getDownloadUrl(activeSpace(), item.rel_path)}
-                              target="_blank"
-                              class="px-2 py-0.5 border border-black bg-sky-100 text-[11px]"
-                            >
-                              {item.is_dir ? '下载(ZIP)' : '下载'}
-                            </a>
-                            <button
-                              onClick={() => handleDelete(item)}
-                              class="px-2 py-0.5 border border-black bg-white text-[11px] cursor-pointer"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Mobile Metadata Subtitle */}
-                        <div class="flex sm:hidden items-center gap-3 text-[11px] font-mono text-neutral-600 my-1">
-                          <span>{item.is_dir ? '文件夹' : formatBytes(item.size_bytes)}</span>
-                          <Show when={item.blake3_short}>
-                            <span>BLAKE3:{item.blake3_short}</span>
-                          </Show>
-                          <span>{formatTime(item.modified_unix)}</span>
-                        </div>
-
-                        {/* Desktop Resizable Columns */}
-                        <div
-                          style={{ width: `${colWidths().size}px` }}
-                          class="hidden sm:flex items-center shrink-0 font-mono py-2 px-2.5 border-r border-neutral-200 truncate"
-                        >
-                          {item.is_dir ? '-' : formatBytes(item.size_bytes)}
-                        </div>
-                        <div
-                          style={{ width: `${colWidths().hash}px` }}
-                          class="hidden sm:flex items-center shrink-0 font-mono text-[11px] text-neutral-600 py-2 px-2.5 border-r border-neutral-200 truncate"
-                        >
-                          {item.blake3_short || '-'}
-                        </div>
-                        <div
-                          style={{ width: `${colWidths().mtime}px` }}
-                          class="hidden sm:flex items-center shrink-0 font-mono text-[11px] py-2 px-2.5 border-r border-neutral-200 truncate"
-                        >
-                          {formatTime(item.modified_unix)}
-                        </div>
-                        <div class="hidden sm:flex flex-1 items-center justify-end gap-1.5 py-2 px-3 min-w-[130px]">
-                          {/* Online Preview Button */}
-                          <Show when={!item.is_dir && getFileCategory(item.name) !== 'archive' && getFileCategory(item.name) !== 'other'}>
-                            <button
-                              onClick={() => openPreview(item)}
-                              class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0"
-                              title="在线预览"
-                            >
-                              预览
-                            </button>
-                          </Show>
-
-                          {/* Remote Extract Button */}
-                          <Show when={!item.is_dir && getFileCategory(item.name) === 'archive'}>
-                            <button
-                              onClick={() => openExtractModal(item)}
-                              class="px-1.5 py-0.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-[11px] cursor-pointer shrink-0"
-                              title="远程解压压缩包"
-                            >
-                              解压
-                            </button>
-                          </Show>
-
-                          {/* Directory downloads as ZIP, File downloads directly */}
-                          <a
-                            href={getDownloadUrl(activeSpace(), item.rel_path)}
-                            target="_blank"
-                            class="px-1.5 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] shrink-0"
-                            title={item.is_dir ? '打包下载整个文件夹为 ZIP 压缩包' : '下载文件'}
-                          >
-                            {item.is_dir ? '下载(ZIP)' : '下载'}
-                          </a>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0"
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
               </div>
             </div>
           </Show>
 
           {/* View 2: User Quota Management (Admin Only) */}
           <Show when={activeView() === 'users' && isAdmin()}>
-            <div class="p-4 sm:p-6 space-y-4 max-w-4xl">
+            <div class="p-4 sm:p-6 space-y-4 max-w-4xl md-view-animate">
               <div class="flex items-center justify-between border-b border-black pb-2">
                 <div>
                   <h2 class="text-sm sm:text-base font-bold">用户存储配额管理 (Quota Management)</h2>
@@ -1326,7 +1358,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={loadAdminUsers}
-                  class="px-3 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+                  class="px-3 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer transition-colors"
                 >
                   刷新列表
                 </button>
@@ -1347,7 +1379,7 @@ export default function App() {
                   <tbody>
                     <For each={adminUsers()}>
                       {(u) => (
-                        <tr class="border-b border-black last:border-b-0 hover:bg-sky-50">
+                        <tr class="border-b border-black last:border-b-0 hover:bg-sky-50 transition-colors">
                           <td class="p-2.5 font-medium">{u.email}</td>
                           <td class="p-2.5">
                             <span class="px-1.5 py-0.5 border border-black text-[10px] bg-white">
@@ -1378,7 +1410,7 @@ export default function App() {
                           <td class="p-2.5 text-right">
                             <button
                               onClick={() => handleSaveUserQuota(u.id)}
-                              class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer"
+                              class="px-2.5 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer transition-colors"
                             >
                               保存配额
                             </button>
@@ -1394,7 +1426,7 @@ export default function App() {
 
           {/* View 3: Transfer Logs */}
           <Show when={activeView() === 'transfers'}>
-            <div class="p-4 sm:p-6 space-y-4 max-w-5xl">
+            <div class="p-4 sm:p-6 space-y-4 max-w-5xl md-view-animate">
               <div class="flex items-center justify-between border-b border-black pb-2">
                 <div>
                   <h2 class="text-sm sm:text-base font-bold">文件传输审计记录 (Transfer Logs)</h2>
@@ -1404,7 +1436,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={loadTransferLogs}
-                  class="px-3 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer"
+                  class="px-3 py-1 border border-black bg-white hover:bg-sky-100 text-xs cursor-pointer transition-colors"
                 >
                   刷新记录
                 </button>
@@ -1436,7 +1468,7 @@ export default function App() {
                     >
                       <For each={transferLogs()}>
                         {(log) => (
-                          <tr class="border-b border-black last:border-b-0 hover:bg-sky-50 font-mono text-[11px]">
+                          <tr class="border-b border-black last:border-b-0 hover:bg-sky-50 font-mono text-[11px] transition-colors">
                             <td class="p-2.5">{formatTime(log.created_at)}</td>
                             <td class="p-2.5">{log.user_email}</td>
                             <td class="p-2.5">
@@ -1476,7 +1508,7 @@ export default function App() {
 
           {/* View 4: System Configuration (Admin Only) */}
           <Show when={activeView() === 'settings' && isAdmin() && sysConfig()}>
-            <div class="p-4 sm:p-6 max-w-4xl space-y-4">
+            <div class="p-4 sm:p-6 max-w-4xl space-y-4 md-view-animate">
               <div class="flex items-center justify-between border-b border-black pb-2">
                 <div>
                   <h2 class="text-sm sm:text-base font-bold">系统与物理存储池配置 (System Settings)</h2>
@@ -1486,7 +1518,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={handleSaveConfig}
-                  class="px-4 py-1.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-xs cursor-pointer"
+                  class="px-4 py-1.5 border border-black bg-sky-200 hover:bg-sky-300 font-bold text-xs cursor-pointer transition-colors"
                 >
                   保存配置并生效
                 </button>
@@ -1499,13 +1531,13 @@ export default function App() {
                   <div class="flex items-center gap-2">
                     <button
                       onClick={() => openFsExplorer()}
-                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer"
+                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer transition-colors"
                     >
                       物理路径管理器
                     </button>
                     <button
                       onClick={() => setShowInitDiskModal(true)}
-                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer"
+                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-normal cursor-pointer transition-colors"
                     >
                       + 添加新存储盘
                     </button>
@@ -1519,7 +1551,7 @@ export default function App() {
                   >
                     <For each={sysConfig()!.storage.pools}>
                       {(pool, idx) => (
-                        <div class="border border-black p-2.5 bg-white text-xs grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                        <div class="border border-black p-2.5 bg-white text-xs grid grid-cols-1 sm:grid-cols-12 gap-2 items-center md-row-animate">
                           <div class="sm:col-span-3">
                             <span class="text-[11px] text-neutral-500 block">标识 / 名称</span>
                             <span class="font-bold">{pool.name}</span>
@@ -1543,7 +1575,7 @@ export default function App() {
                                 c.storage.pools.splice(idx(), 1);
                                 setSysConfig(c);
                               }}
-                              class="px-2 py-0.5 border border-black bg-white hover:bg-red-50 text-[11px] cursor-pointer"
+                              class="px-2 py-0.5 border border-black bg-white hover:bg-red-50 text-[11px] cursor-pointer transition-colors"
                             >
                               删除
                             </button>
@@ -1605,8 +1637,8 @@ export default function App() {
 
       {/* Initial Disk Setup Modal */}
       <Show when={showInitDiskModal()}>
-        <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4">
+        <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 md-backdrop-animate">
+          <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4 md-modal-animate">
             <div class="flex items-center justify-between border-b border-black pb-2">
               <h3 class="font-bold text-sm">配置存储硬盘路径 (初始化向导)</h3>
               <Show when={disks().length > 0}>
@@ -1692,7 +1724,7 @@ export default function App() {
 
               <button
                 type="submit"
-                class="w-full py-2 border border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer mt-2"
+                class="w-full py-2 border border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer mt-2 transition-colors"
               >
                 保存并初始化存储空间
               </button>
@@ -1703,8 +1735,8 @@ export default function App() {
 
       {/* Physical Path Manager Modal (Starts from root '/') */}
       <Show when={showFsExplorerModal()}>
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-3 sm:p-6 z-[60]">
-          <div class="w-full max-w-3xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[90vh] space-y-3 shadow-2xl">
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-3 sm:p-6 z-[60] md-backdrop-animate">
+          <div class="w-full max-w-3xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[90vh] space-y-3 shadow-2xl md-modal-animate">
             {/* Header */}
             <div class="flex items-center justify-between border-b border-black pb-2">
               <div>
@@ -1787,7 +1819,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => loadFsDirectory(crumb.path)}
-                      class={`px-1.5 py-0.5 hover:bg-sky-200 cursor-pointer ${
+                      class={`px-1.5 py-0.5 hover:bg-sky-200 cursor-pointer transition-colors ${
                         crumb.path === fsCurrentPath()
                           ? 'font-bold bg-sky-200 underline'
                           : 'text-neutral-800'
@@ -1805,7 +1837,7 @@ export default function App() {
 
             {/* Inline Subdir Creation Bar */}
             <Show when={showFsMkdirInput()}>
-              <div class="p-2 border border-black bg-sky-100 flex items-center gap-2 text-xs">
+              <div class="p-2 border border-black bg-sky-100 flex items-center gap-2 text-xs md-view-animate">
                 <span class="font-medium shrink-0">在当前路径下新建目录:</span>
                 <input
                   type="text"
@@ -1840,7 +1872,7 @@ export default function App() {
 
             {/* Error Message if any */}
             <Show when={fsError()}>
-              <div class="p-2 border border-red-500 bg-red-50 text-red-700 text-xs font-mono">
+              <div class="p-2 border border-red-500 bg-red-50 text-red-700 text-xs font-mono md-view-animate">
                 错误: {fsError()}
               </div>
             </Show>
@@ -1854,7 +1886,7 @@ export default function App() {
                 <Show
                   when={fsDirs().length > 0}
                   fallback={
-                    <div class="p-8 text-center text-xs text-neutral-500 space-y-2">
+                    <div class="p-8 text-center text-xs text-neutral-500 space-y-2 md-view-animate">
                       <p>当前目录下没有子目录。</p>
                       <p class="text-[11px] text-neutral-400">
                         您可以点击上方 [+ 新建子目录] 在此创建，或直接点击下方按钮选取当前目录作为存储盘。
@@ -1862,7 +1894,7 @@ export default function App() {
                     </div>
                   }
                 >
-                  <table class="w-full text-left text-xs border-collapse">
+                  <table class="w-full text-left text-xs border-collapse md-view-animate">
                     <thead class="sticky top-0 bg-neutral-100 border-b border-black font-semibold text-[11px]">
                       <tr>
                         <th class="py-1.5 px-3">子目录名称</th>
@@ -1953,8 +1985,8 @@ export default function App() {
 
       {/* File Preview Modal (Code, PDF, Image, Video, Audio) */}
       <Show when={previewItem()}>
-        <div class="fixed inset-0 bg-black/60 flex items-center justify-center p-3 sm:p-6 z-[70]">
-          <div class="w-full max-w-4xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[92vh] space-y-3 shadow-2xl">
+        <div class="fixed inset-0 bg-black/60 flex items-center justify-center p-3 sm:p-6 z-[70] md-backdrop-animate">
+          <div class="w-full max-w-4xl border-2 border-black bg-white p-4 sm:p-5 flex flex-col max-h-[92vh] space-y-3 shadow-2xl md-modal-animate">
             {/* Header */}
             <div class="flex items-center justify-between border-b border-black pb-2">
               <div class="flex items-center gap-2 min-w-0 pr-3">
@@ -2097,8 +2129,8 @@ export default function App() {
 
       {/* Archive Extract Modal */}
       <Show when={extractItem()}>
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-          <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4 shadow-2xl">
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70] md-backdrop-animate">
+          <div class="w-full max-w-md border-2 border-black bg-white p-5 space-y-4 shadow-2xl md-modal-animate">
             <div class="flex items-center justify-between border-b border-black pb-2">
               <h3 class="font-bold text-sm">远程解压压缩包</h3>
               <button
@@ -2122,7 +2154,7 @@ export default function App() {
               <div class="space-y-2">
                 <span class="font-semibold block">解压目标位置:</span>
 
-                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50 transition-colors">
                   <input
                     type="radio"
                     name="extract_option"
@@ -2139,7 +2171,7 @@ export default function App() {
                   </div>
                 </label>
 
-                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50 transition-colors">
                   <input
                     type="radio"
                     name="extract_option"
@@ -2153,7 +2185,7 @@ export default function App() {
                   </div>
                 </label>
 
-                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50">
+                <label class="flex items-start gap-2 p-2 border border-black cursor-pointer hover:bg-sky-50 transition-colors">
                   <input
                     type="radio"
                     name="extract_option"
@@ -2200,8 +2232,8 @@ export default function App() {
 
       {/* Login / Register Modal */}
       <Show when={showAuthModal()}>
-        <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div class="w-full max-w-sm border-2 border-black bg-white p-4 sm:p-5 space-y-4">
+        <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 md-backdrop-animate">
+          <div class="w-full max-w-sm border-2 border-black bg-white p-4 sm:p-5 space-y-4 md-modal-animate">
             <div class="flex items-center justify-between border-b border-black pb-2">
               <h3 class="font-bold text-sm">
                 {authMode() === 'login' ? '账号登录 (邮箱密码 / Google)' : '注册新账号'}
@@ -2239,7 +2271,7 @@ export default function App() {
 
               <button
                 type="submit"
-                class="w-full py-2 border border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer"
+                class="w-full py-2 border border-black bg-sky-200 hover:bg-sky-300 font-bold cursor-pointer transition-colors"
               >
                 {authMode() === 'login' ? '登录' : '注册账号 (初始无配额)'}
               </button>
@@ -2249,7 +2281,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleGoogleLogin}
-                class="w-full py-2 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer"
+                class="w-full py-2 border border-black bg-white hover:bg-sky-100 font-semibold cursor-pointer transition-colors"
               >
                 使用 Google 账号登录 (OAuth 2.0)
               </button>
