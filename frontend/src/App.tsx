@@ -79,8 +79,9 @@ export default function App() {
   const [emailInput, setEmailInput] = createSignal('admin@mayadesk.local');
   const [passwordInput, setPasswordInput] = createSignal('admin123456');
 
-  // Navigation & View state ('files' | 'settings')
+  // Navigation & Mobile Drawer state
   const [activeView, setActiveView] = createSignal<'files' | 'settings'>('files');
+  const [mobileMenuOpen, setMobileMenuOpen] = createSignal(false);
 
   // Disk & File Explorer state
   const [disks, setDisks] = createSignal<DiskMountSummary[]>(DEFAULT_FALLBACK_DISKS);
@@ -188,7 +189,7 @@ export default function App() {
       setEntries(list);
       setStatusMessage(`已加载 ${list.length} 项 (${poolId}:${path})`);
     } catch (err: any) {
-      setStatusMessage(`提示: 后端未连接或目录为空 (${err?.message || '预览模式'})`);
+      setStatusMessage(`提示: ${err?.message || '目录为空'}`);
       setEntries([]);
     } finally {
       setLoadingFiles(false);
@@ -245,7 +246,7 @@ export default function App() {
       const info = await apiGetGoogleAuthUrl();
       window.location.href = info.authorize_url;
     } catch {
-      setStatusMessage('请在「系统参数与路径配置」中配置 Google OAuth Client ID');
+      setStatusMessage('请在「配置」中填写 Google OAuth Client ID');
     }
   };
 
@@ -325,69 +326,138 @@ export default function App() {
     setSysConfig(cfg);
   };
 
+  const selectPool = (poolId: string) => {
+    setActiveView('files');
+    setActivePoolId(poolId);
+    setCurrentPath('/');
+    setMobileMenuOpen(false);
+  };
+
   const activePoolObj = () => disks().find((d) => d.id === activePoolId());
 
   return (
     <div class="min-h-screen flex flex-col bg-white text-black text-sm">
-      {/* Top Flat Header Bar (Black / White / Light Blue) */}
-      <header class="h-12 border-b border-black px-4 flex items-center justify-between bg-white">
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2 font-bold tracking-tight text-base">
-            <span class="px-2 py-0.5 bg-black text-white text-xs font-mono">MD</span>
-            <span>{sysConfig().server.app_name}</span>
+      {/* Top Flat Header Bar — Fully Responsive for Mobile & Desktop */}
+      <header class="border-b border-black px-3 py-2 md:px-4 md:h-12 flex flex-wrap items-center justify-between gap-2 bg-white">
+        <div class="flex items-center gap-2 md:gap-4">
+          {/* Mobile Disk Drawer Toggle Button */}
+          <button
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            class="md:hidden px-2 py-1 border border-black bg-sky-100 text-black text-xs font-bold cursor-pointer"
+          >
+            {mobileMenuOpen() ? '✕ 收起盘符' : '☰ 硬盘池'}
+          </button>
+
+          <div class="flex items-center gap-1.5 font-bold tracking-tight text-sm md:text-base">
+            <span class="px-1.5 py-0.5 bg-black text-white text-xs font-mono">MD</span>
+            <span class="truncate max-w-[110px] sm:max-w-none">{sysConfig().server.app_name}</span>
           </div>
 
           <nav class="flex items-center border border-black">
             <button
               onClick={() => setActiveView('files')}
-              class={`px-3 py-1 text-xs font-medium cursor-pointer transition-none ${
+              class={`px-2.5 py-1 text-xs font-medium cursor-pointer ${
                 activeView() === 'files'
                   ? 'bg-sky-100 text-black font-semibold'
                   : 'bg-white text-black hover:bg-sky-50'
               }`}
             >
-              文件管理 (多盘 NAS)
+              文件
             </button>
             <button
               onClick={() => setActiveView('settings')}
-              class={`px-3 py-1 text-xs font-medium border-l border-black cursor-pointer transition-none ${
+              class={`px-2.5 py-1 text-xs font-medium border-l border-black cursor-pointer ${
                 activeView() === 'settings'
                   ? 'bg-sky-100 text-black font-semibold'
                   : 'bg-white text-black hover:bg-sky-50'
               }`}
             >
-              全路径与参数配置
+              配置
             </button>
           </nav>
         </div>
 
         {/* Right Status & Auth Bar */}
-        <div class="flex items-center gap-3 text-xs">
+        <div class="flex items-center gap-1.5 md:gap-3 text-xs ml-auto">
           <button
             onClick={() =>
               setTransportChannel((c) => (c === 'p2p-lan' ? 'cf-tunnel-web' : 'p2p-lan'))
             }
-            title="点击模拟切换 P2P 直连 / Cloudflare Tunnel 兜底通道"
-            class="px-2.5 py-1 border border-black bg-sky-100 text-black font-mono cursor-pointer"
+            title="点击切换 P2P 直连 / Cloudflare Tunnel 兜底通道"
+            class="px-2 py-1 border border-black bg-sky-100 text-black font-mono cursor-pointer text-[11px] md:text-xs"
           >
             {transportChannel() === 'p2p-lan'
-              ? `[P2P 直连 · UDP:${sysConfig().network.p2p_udp_port} · ${rttMs()}ms]`
-              : `[CF Tunnel 兜底 · ${sysConfig().network.cloudflare_tunnel.tunnel_name}]`}
+              ? `P2P:${rttMs()}ms`
+              : `CF-Tunnel`}
           </button>
 
           <button
             onClick={() => setShowAuthModal(true)}
-            class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 text-black cursor-pointer"
+            class="px-2 py-1 border border-black bg-white hover:bg-sky-100 text-black cursor-pointer text-[11px] md:text-xs truncate max-w-[130px] sm:max-w-none"
           >
-            {user() ? `${user()!.email} (切换/登录)` : '邮箱 / Google 登录'}
+            {user() ? user()!.email.split('@')[0] : '登录'}
           </button>
         </div>
       </header>
 
+      {/* Mobile Horizontal Quick Disk Selector Bar (Always visible on small screens in Files view) */}
+      <Show when={activeView() === 'files'}>
+        <div class="md:hidden border-b border-black bg-white px-3 py-2 flex items-center gap-2 overflow-x-auto whitespace-nowrap">
+          <For each={disks()}>
+            {(pool) => (
+              <button
+                onClick={() => selectPool(pool.id)}
+                class={`px-2.5 py-1 border border-black text-xs cursor-pointer shrink-0 ${
+                  activePoolId() === pool.id
+                    ? 'bg-sky-100 font-semibold'
+                    : 'bg-white'
+                }`}
+              >
+                {pool.pool_type === 'private' ? '[私] ' : '[享] '}
+                {pool.name}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Mobile Slide-Down Full Disk Details Drawer */}
+      <Show when={mobileMenuOpen()}>
+        <div class="md:hidden border-b-2 border-black bg-white p-3 space-y-3">
+          <div class="text-xs font-bold uppercase border-b border-black pb-1">
+            存储池详情与切换 (点击选择)
+          </div>
+          <div class="space-y-1.5">
+            <For each={disks()}>
+              {(pool) => (
+                <button
+                  onClick={() => selectPool(pool.id)}
+                  class={`w-full text-left p-2 border border-black ${
+                    activePoolId() === pool.id ? 'bg-sky-100 font-semibold' : 'bg-white'
+                  }`}
+                >
+                  <div class="flex items-center justify-between text-xs">
+                    <span>
+                      [{pool.pool_type === 'private' ? '私人盘' : '共享盘'}] {pool.name}
+                    </span>
+                    <span class="font-mono text-[11px]">
+                      {formatBytes(pool.used_bytes)} / {pool.quota_gb}G
+                    </span>
+                  </div>
+                  <div class="text-[11px] font-mono text-neutral-600 truncate mt-0.5">
+                    挂载路径: {pool.mount_path}
+                  </div>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+
       {/* Main Workspace */}
-      <div class="flex-1 flex overflow-hidden">
-        {/* Left Flat Sidebar: Private & Shared Disk Pools */}
-        <aside class="w-64 border-r border-black bg-white flex flex-col justify-between p-4">
+      <div class="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* Desktop Left Flat Sidebar (Hidden on Mobile, shown on md+) */}
+        <aside class="hidden md:flex md:w-64 border-r border-black bg-white flex-col justify-between p-4 shrink-0">
           <div class="space-y-5">
             <div>
               <div class="text-[11px] font-bold uppercase tracking-wider pb-2 border-b border-black">
@@ -397,11 +467,7 @@ export default function App() {
                 <For each={disks().filter((d) => d.pool_type === 'private')}>
                   {(pool) => (
                     <button
-                      onClick={() => {
-                        setActiveView('files');
-                        setActivePoolId(pool.id);
-                        setCurrentPath('/');
-                      }}
+                      onClick={() => selectPool(pool.id)}
                       class={`w-full text-left p-2 border border-black cursor-pointer ${
                         activePoolId() === pool.id && activeView() === 'files'
                           ? 'bg-sky-100 font-semibold'
@@ -409,8 +475,8 @@ export default function App() {
                       }`}
                     >
                       <div class="flex items-center justify-between text-xs">
-                        <span>{pool.name}</span>
-                        <span class="font-mono text-[10px]">
+                        <span class="truncate">{pool.name}</span>
+                        <span class="font-mono text-[10px] shrink-0">
                           {formatBytes(pool.used_bytes)}/{pool.quota_gb}G
                         </span>
                       </div>
@@ -431,11 +497,7 @@ export default function App() {
                 <For each={disks().filter((d) => d.pool_type === 'shared')}>
                   {(pool) => (
                     <button
-                      onClick={() => {
-                        setActiveView('files');
-                        setActivePoolId(pool.id);
-                        setCurrentPath('/');
-                      }}
+                      onClick={() => selectPool(pool.id)}
                       class={`w-full text-left p-2 border border-black cursor-pointer ${
                         activePoolId() === pool.id && activeView() === 'files'
                           ? 'bg-sky-100 font-semibold'
@@ -443,8 +505,8 @@ export default function App() {
                       }`}
                     >
                       <div class="flex items-center justify-between text-xs">
-                        <span>{pool.name}</span>
-                        <span class="font-mono text-[10px]">
+                        <span class="truncate">{pool.name}</span>
+                        <span class="font-mono text-[10px] shrink-0">
                           {formatBytes(pool.used_bytes)}/{pool.quota_gb}G
                         </span>
                       </div>
@@ -461,38 +523,40 @@ export default function App() {
           <div class="border-t border-black pt-3 text-[11px] space-y-1 font-mono">
             <div>服务端口: {sysConfig().server.port}</div>
             <div class="truncate">数据库: {sysConfig().database.sqlite_path}</div>
-            <div>客户端支持: Web/Mac/Win/Linux/Android</div>
+            <div>客户端: Web/Mac/Win/Linux/Android</div>
           </div>
         </aside>
 
         {/* Right Content Area */}
-        <main class="flex-1 flex flex-col bg-white overflow-y-auto">
+        <main class="flex-1 flex flex-col bg-white overflow-y-auto min-w-0">
           <Show
             when={activeView() === 'files'}
             fallback={
-              /* Full System & Path Config Editor View */
-              <div class="p-6 max-w-4xl space-y-6">
-                <div class="flex items-center justify-between border-b border-black pb-3">
+              /* Full System & Path Config Editor View — Mobile & Desktop Responsive */
+              <div class="p-3 sm:p-6 max-w-4xl w-full space-y-5">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-black pb-3">
                   <div>
-                    <h2 class="text-base font-bold">系统全路径与参数配置中心 (config/config.toml)</h2>
+                    <h2 class="text-sm sm:text-base font-bold">
+                      系统全路径与参数配置中心 (config/config.toml)
+                    </h2>
                     <p class="text-xs text-neutral-600 mt-0.5">
-                      所有挂载路径、数据库位置、缓存目录、Google OAuth、P2P 端口与 Cloudflare Tunnel 均可在此直接修改并持久化。
+                      所有挂载路径、数据库位置、缓存目录、Google OAuth、P2P 端口与 Cloudflare Tunnel 均可直接修改并持久化。
                     </p>
                   </div>
                   <button
                     onClick={handleSaveConfig}
-                    class="px-4 py-1.5 border border-black bg-sky-200 hover:bg-sky-300 text-black font-semibold text-xs cursor-pointer"
+                    class="w-full sm:w-auto px-4 py-2 sm:py-1.5 border border-black bg-sky-200 hover:bg-sky-300 text-black font-semibold text-xs cursor-pointer shrink-0"
                   >
                     保存全部配置到服务器
                   </button>
                 </div>
 
                 {/* 1. Core Paths & Server Settings */}
-                <section class="border border-black p-4 space-y-3">
+                <section class="border border-black p-3 sm:p-4 space-y-3">
                   <h3 class="text-xs font-bold uppercase tracking-wider bg-sky-100 px-2 py-1 border-b border-black">
                     1. 基础服务路径与数据库文件位置
                   </h3>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <label class="block space-y-1">
                       <span class="font-medium">系统名称 (app_name)</span>
                       <input
@@ -586,88 +650,104 @@ export default function App() {
                   </div>
                 </section>
 
-                {/* 2. Multi-Disk NAS Storage Pools Config */}
-                <section class="border border-black p-4 space-y-3">
-                  <div class="flex items-center justify-between bg-sky-100 px-2 py-1 border-b border-black">
+                {/* 2. Multi-Disk NAS Storage Pools Config (Responsive Cards on Mobile, Grid on Desktop) */}
+                <section class="border border-black p-3 sm:p-4 space-y-3">
+                  <div class="flex flex-wrap items-center justify-between gap-2 bg-sky-100 px-2 py-1.5 border-b border-black">
                     <h3 class="text-xs font-bold uppercase tracking-wider">
-                      2. 多盘 NAS 存储池路径映射 (私人硬盘 & 共享硬盘)
+                      2. 多盘 NAS 存储池路径映射
                     </h3>
                     <button
                       onClick={addStoragePool}
-                      class="px-2 py-0.5 border border-black bg-white hover:bg-sky-200 text-xs font-medium cursor-pointer"
+                      class="px-2.5 py-1 border border-black bg-white hover:bg-sky-200 text-xs font-medium cursor-pointer"
                     >
                       + 新增物理盘挂载池
                     </button>
                   </div>
 
-                  <div class="space-y-2">
+                  <div class="space-y-3">
                     <For each={sysConfig().storage.pools}>
                       {(pool, idx) => (
-                        <div class="grid grid-cols-12 gap-2 items-center border border-black p-2 bg-white text-xs">
-                          <input
-                            type="text"
-                            placeholder="池 ID"
-                            value={pool.id}
-                            onInput={(e) => {
-                              const c = structuredClone(sysConfig());
-                              c.storage.pools[idx()].id = e.currentTarget.value;
-                              setSysConfig(c);
-                            }}
-                            class="col-span-2 px-2 py-1 border border-black font-mono"
-                          />
-                          <input
-                            type="text"
-                            placeholder="显示名称"
-                            value={pool.name}
-                            onInput={(e) => {
-                              const c = structuredClone(sysConfig());
-                              c.storage.pools[idx()].name = e.currentTarget.value;
-                              setSysConfig(c);
-                            }}
-                            class="col-span-3 px-2 py-1 border border-black"
-                          />
-                          <select
-                            value={pool.pool_type}
-                            onChange={(e) => {
-                              const c = structuredClone(sysConfig());
-                              c.storage.pools[idx()].pool_type = e.currentTarget.value as
-                                | 'private'
-                                | 'shared';
-                              setSysConfig(c);
-                            }}
-                            class="col-span-2 px-1 py-1 border border-black bg-sky-50"
-                          >
-                            <option value="private">私人盘 (Private)</option>
-                            <option value="shared">共享盘 (Shared)</option>
-                          </select>
-                          <input
-                            type="text"
-                            placeholder="宿主机/容器挂载路径 (如 /mnt/disk1)"
-                            value={pool.mount_path}
-                            onInput={(e) => {
-                              const c = structuredClone(sysConfig());
-                              c.storage.pools[idx()].mount_path = e.currentTarget.value;
-                              setSysConfig(c);
-                            }}
-                            class="col-span-3 px-2 py-1 border border-black font-mono"
-                          />
-                          <input
-                            type="number"
-                            placeholder="配额GB"
-                            value={pool.quota_gb}
-                            onInput={(e) => {
-                              const c = structuredClone(sysConfig());
-                              c.storage.pools[idx()].quota_gb = Number(e.currentTarget.value);
-                              setSysConfig(c);
-                            }}
-                            class="col-span-1 px-1 py-1 border border-black font-mono"
-                          />
-                          <button
-                            onClick={() => removeStoragePool(idx())}
-                            class="col-span-1 px-2 py-1 border border-black bg-white hover:bg-sky-100 text-center cursor-pointer"
-                          >
-                            删除
-                          </button>
+                        <div class="border border-black p-2.5 bg-white text-xs space-y-2">
+                          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <label class="block space-y-0.5">
+                              <span class="text-[11px] text-neutral-600">池 ID</span>
+                              <input
+                                type="text"
+                                value={pool.id}
+                                onInput={(e) => {
+                                  const c = structuredClone(sysConfig());
+                                  c.storage.pools[idx()].id = e.currentTarget.value;
+                                  setSysConfig(c);
+                                }}
+                                class="w-full px-2 py-1 border border-black font-mono"
+                              />
+                            </label>
+                            <label class="block space-y-0.5">
+                              <span class="text-[11px] text-neutral-600">显示名称</span>
+                              <input
+                                type="text"
+                                value={pool.name}
+                                onInput={(e) => {
+                                  const c = structuredClone(sysConfig());
+                                  c.storage.pools[idx()].name = e.currentTarget.value;
+                                  setSysConfig(c);
+                                }}
+                                class="w-full px-2 py-1 border border-black"
+                              />
+                            </label>
+                            <label class="block space-y-0.5">
+                              <span class="text-[11px] text-neutral-600">类型</span>
+                              <select
+                                value={pool.pool_type}
+                                onChange={(e) => {
+                                  const c = structuredClone(sysConfig());
+                                  c.storage.pools[idx()].pool_type = e.currentTarget.value as
+                                    | 'private'
+                                    | 'shared';
+                                  setSysConfig(c);
+                                }}
+                                class="w-full px-2 py-1 border border-black bg-sky-50"
+                              >
+                                <option value="private">私人盘 (Private)</option>
+                                <option value="shared">共享盘 (Shared)</option>
+                              </select>
+                            </label>
+                          </div>
+
+                          <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+                            <label class="block space-y-0.5 sm:col-span-8">
+                              <span class="text-[11px] text-neutral-600">物理挂载路径 (mount_path)</span>
+                              <input
+                                type="text"
+                                value={pool.mount_path}
+                                onInput={(e) => {
+                                  const c = structuredClone(sysConfig());
+                                  c.storage.pools[idx()].mount_path = e.currentTarget.value;
+                                  setSysConfig(c);
+                                }}
+                                class="w-full px-2 py-1 border border-black font-mono"
+                              />
+                            </label>
+                            <label class="block space-y-0.5 sm:col-span-2">
+                              <span class="text-[11px] text-neutral-600">配额 (GB)</span>
+                              <input
+                                type="number"
+                                value={pool.quota_gb}
+                                onInput={(e) => {
+                                  const c = structuredClone(sysConfig());
+                                  c.storage.pools[idx()].quota_gb = Number(e.currentTarget.value);
+                                  setSysConfig(c);
+                                }}
+                                class="w-full px-2 py-1 border border-black font-mono"
+                              />
+                            </label>
+                            <button
+                              onClick={() => removeStoragePool(idx())}
+                              class="sm:col-span-2 w-full py-1 border border-black bg-white hover:bg-sky-100 text-center cursor-pointer"
+                            >
+                              删除此盘
+                            </button>
+                          </div>
                         </div>
                       )}
                     </For>
@@ -675,11 +755,11 @@ export default function App() {
                 </section>
 
                 {/* 3. P2P & Independent Cloudflare Tunnel Settings */}
-                <section class="border border-black p-4 space-y-3">
+                <section class="border border-black p-3 sm:p-4 space-y-3">
                   <h3 class="text-xs font-bold uppercase tracking-wider bg-sky-100 px-2 py-1 border-b border-black">
                     3. P2P 穿透与独立 Cloudflare Tunnel 配置
                   </h3>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <label class="block space-y-1">
                       <span class="font-medium">P2P UDP 监听端口 (p2p_udp_port)</span>
                       <input
@@ -694,7 +774,7 @@ export default function App() {
                       />
                     </label>
                     <label class="block space-y-1">
-                      <span class="font-medium">P2P 打洞超时回退毫秒数 (p2p_handshake_timeout_ms)</span>
+                      <span class="font-medium">P2P 打洞超时回退毫秒数</span>
                       <input
                         type="number"
                         value={sysConfig().network.p2p_handshake_timeout_ms}
@@ -753,11 +833,11 @@ export default function App() {
                 </section>
 
                 {/* 4. Auth & Google OAuth Settings */}
-                <section class="border border-black p-4 space-y-3">
+                <section class="border border-black p-3 sm:p-4 space-y-3">
                   <h3 class="text-xs font-bold uppercase tracking-wider bg-sky-100 px-2 py-1 border-b border-black">
                     4. 邮箱密码鉴权与 Google OAuth 2.0 参数配置
                   </h3>
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <label class="block space-y-1">
                       <span class="font-medium">Google Client ID</span>
                       <input
@@ -789,48 +869,46 @@ export default function App() {
               </div>
             }
           >
-            {/* File Explorer Toolbar */}
-            <div class="border-b border-black px-6 py-3 flex items-center justify-between bg-sky-50/60">
-              <div class="flex items-center gap-2 text-xs">
+            {/* File Explorer Toolbar — Stacks cleanly on Mobile */}
+            <div class="border-b border-black px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-sky-50/60">
+              <div class="flex flex-wrap items-center gap-1.5 text-xs min-w-0">
                 <button
                   onClick={navigateUp}
-                  class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer font-mono"
+                  class="px-2 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer font-mono shrink-0"
                 >
-                  ↑ 上一级
+                  ↑ 上级
                 </button>
-                <span class="font-semibold">{activePoolObj()?.name || activePoolId()}</span>
-                <span class="font-mono text-neutral-600">
-                  ({activePoolObj()?.mount_path})
-                </span>
-                <span class="px-2 py-0.5 bg-sky-100 border border-black font-mono">
-                  路径: {currentPath()}
+                <span class="font-semibold truncate">{activePoolObj()?.name || activePoolId()}</span>
+                <span class="px-1.5 py-0.5 bg-sky-100 border border-black font-mono truncate max-w-[180px] sm:max-w-xs">
+                  {currentPath()}
                 </span>
               </div>
 
-              <div class="flex items-center gap-2 text-xs">
+              <div class="flex items-center gap-1.5 text-xs">
                 <button
                   onClick={handleCreateFolder}
-                  class="px-3 py-1 border border-black bg-white hover:bg-sky-100 font-medium cursor-pointer"
+                  class="flex-1 sm:flex-none px-2.5 py-1.5 sm:py-1 border border-black bg-white hover:bg-sky-100 font-medium cursor-pointer text-center"
                 >
                   + 新建文件夹
                 </button>
-                <label class="px-3 py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer">
+                <label class="flex-1 sm:flex-none px-2.5 py-1.5 sm:py-1 border border-black bg-sky-200 hover:bg-sky-300 font-semibold cursor-pointer text-center">
                   ↑ 上传文件
                   <input type="file" multiple onChange={handleFileUpload} class="hidden" />
                 </label>
                 <button
                   onClick={() => refreshDirectory()}
-                  class="px-2.5 py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer"
+                  class="px-2.5 py-1.5 sm:py-1 border border-black bg-white hover:bg-sky-100 cursor-pointer shrink-0"
                 >
                   刷新
                 </button>
               </div>
             </div>
 
-            {/* Flat File Table */}
-            <div class="flex-1 p-6">
+            {/* Flat File List — Mobile Card Rows on <sm, 12-Col Table on sm+ */}
+            <div class="flex-1 p-3 sm:p-6">
               <div class="border border-black">
-                <div class="grid grid-cols-12 border-b border-black bg-sky-100 px-3 py-2 text-xs font-bold">
+                {/* Desktop Table Header */}
+                <div class="hidden sm:grid sm:grid-cols-12 border-b border-black bg-sky-100 px-3 py-2 text-xs font-bold">
                   <div class="col-span-5">名称</div>
                   <div class="col-span-2">大小</div>
                   <div class="col-span-2">BLAKE3 校验</div>
@@ -838,57 +916,95 @@ export default function App() {
                   <div class="col-span-1 text-right">操作</div>
                 </div>
 
+                {/* Mobile List Header */}
+                <div class="sm:hidden border-b border-black bg-sky-100 px-3 py-1.5 text-xs font-bold flex justify-between">
+                  <span>文件 / 目录列表</span>
+                  <span>操作</span>
+                </div>
+
                 <Show
                   when={!loadingFiles() && entries().length > 0}
                   fallback={
-                    <div class="p-8 text-center text-xs text-neutral-600">
+                    <div class="p-6 sm:p-8 text-center text-xs text-neutral-600">
                       {loadingFiles()
                         ? '正在读取目录...'
-                        : '当前目录为空，可点击右上角「+ 新建文件夹」或「↑ 上传文件」测试。'}
+                        : '当前目录为空，可点击上方「+ 新建文件夹」或「↑ 上传文件」测试。'}
                     </div>
                   }
                 >
                   <For each={entries()}>
                     {(item) => (
-                      <div class="grid grid-cols-12 items-center px-3 py-2 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs">
-                        <div class="col-span-5 flex items-center gap-2 font-medium truncate">
-                          <span class="font-mono text-[11px] px-1 border border-black bg-white">
-                            {item.is_dir ? 'DIR' : 'FILE'}
-                          </span>
-                          <Show
-                            when={item.is_dir}
-                            fallback={<span>{item.name}</span>}
-                          >
-                            <button
-                              onClick={() => setCurrentPath(item.rel_path)}
-                              class="text-left underline hover:bg-sky-100 cursor-pointer font-semibold"
+                      <div class="px-3 py-2.5 sm:py-2 border-b border-black last:border-b-0 hover:bg-sky-50 text-xs flex flex-col sm:grid sm:grid-cols-12 sm:items-center gap-1.5 sm:gap-0">
+                        <div class="sm:col-span-5 flex items-center justify-between sm:justify-start gap-2 min-w-0">
+                          <div class="flex items-center gap-2 min-w-0">
+                            <span class="font-mono text-[10px] px-1 border border-black bg-white shrink-0">
+                              {item.is_dir ? 'DIR' : 'FILE'}
+                            </span>
+                            <Show
+                              when={item.is_dir}
+                              fallback={<span class="font-medium truncate">{item.name}</span>}
                             >
-                              {item.name}
+                              <button
+                                onClick={() => setCurrentPath(item.rel_path)}
+                                class="text-left underline hover:bg-sky-100 cursor-pointer font-semibold truncate"
+                              >
+                                {item.name}
+                              </button>
+                            </Show>
+                          </div>
+
+                          {/* Mobile Action Buttons */}
+                          <div class="flex sm:hidden items-center gap-1.5 shrink-0">
+                            <Show when={!item.is_dir}>
+                              <a
+                                href={getDownloadUrl(activePoolId(), item.rel_path)}
+                                target="_blank"
+                                class="px-2 py-0.5 border border-black bg-sky-100 text-[11px]"
+                              >
+                                下载
+                              </a>
+                            </Show>
+                            <button
+                              onClick={() => handleDelete(item)}
+                              class="px-2 py-0.5 border border-black bg-white text-[11px] cursor-pointer"
+                            >
+                              删除
                             </button>
-                          </Show>
+                          </div>
                         </div>
-                        <div class="col-span-2 font-mono">
+
+                        {/* Mobile Metadata Subtitle */}
+                        <div class="flex sm:hidden items-center gap-3 text-[11px] font-mono text-neutral-600">
+                          <span>{item.is_dir ? '目录' : formatBytes(item.size_bytes)}</span>
+                          <Show when={item.blake3_short}>
+                            <span>BLAKE3:{item.blake3_short}</span>
+                          </Show>
+                          <span>{formatTime(item.modified_unix)}</span>
+                        </div>
+
+                        {/* Desktop Columns */}
+                        <div class="hidden sm:block sm:col-span-2 font-mono">
                           {item.is_dir ? '-' : formatBytes(item.size_bytes)}
                         </div>
-                        <div class="col-span-2 font-mono text-[11px] text-neutral-600">
+                        <div class="hidden sm:block sm:col-span-2 font-mono text-[11px] text-neutral-600 truncate">
                           {item.blake3_short || '-'}
                         </div>
-                        <div class="col-span-2 font-mono text-[11px]">
+                        <div class="hidden sm:block sm:col-span-2 font-mono text-[11px]">
                           {formatTime(item.modified_unix)}
                         </div>
-                        <div class="col-span-1 flex justify-end gap-2">
+                        <div class="hidden sm:flex sm:col-span-1 justify-end gap-1.5">
                           <Show when={!item.is_dir}>
                             <a
                               href={getDownloadUrl(activePoolId(), item.rel_path)}
                               target="_blank"
-                              class="px-1.5 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px]"
+                              class="px-1.5 py-0.5 border border-black bg-sky-100 hover:bg-sky-200 text-[11px] shrink-0"
                             >
                               下载
                             </a>
                           </Show>
                           <button
                             onClick={() => handleDelete(item)}
-                            class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer"
+                            class="px-1.5 py-0.5 border border-black bg-white hover:bg-sky-100 text-[11px] cursor-pointer shrink-0"
                           >
                             删除
                           </button>
@@ -902,20 +1018,19 @@ export default function App() {
           </Show>
 
           {/* Bottom Flat Status Bar */}
-          <footer class="h-8 border-t border-black px-4 flex items-center justify-between bg-white text-[11px] font-mono">
-            <div>状态: {statusMessage()}</div>
-            <div>
-              通道优先级: P2P WebRTC/QUIC ({sysConfig().network.p2p_handshake_timeout_ms}ms) →
-              Cloudflare Tunnel HTTPS
+          <footer class="border-t border-black px-3 py-1.5 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 bg-white text-[11px] font-mono">
+            <div class="truncate">状态: {statusMessage()}</div>
+            <div class="text-neutral-600 truncate">
+              P2P ({sysConfig().network.p2p_handshake_timeout_ms}ms) → CF Tunnel
             </div>
           </footer>
         </main>
       </div>
 
-      {/* Minimalist Flat Login / Register Modal (Email + Password & Google OAuth) */}
+      {/* Minimalist Flat Login / Register Modal */}
       <Show when={showAuthModal()}>
         <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div class="w-full max-w-sm border-2 border-black bg-white p-5 space-y-4">
+          <div class="w-full max-w-sm border-2 border-black bg-white p-4 sm:p-5 space-y-4">
             <div class="flex items-center justify-between border-b border-black pb-2">
               <h3 class="font-bold text-sm">
                 {authMode() === 'login' ? '账号登录 (邮箱密码 / Google)' : '注册新账号'}
