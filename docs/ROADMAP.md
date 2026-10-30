@@ -27,10 +27,13 @@
 
 ## Phase 4：全平台轻量客户端打包与高阶 NAS 特性
 
+> macOS 客户端详细架构参见 [`docs/MACOS_CLIENT_DESIGN.md`](./MACOS_CLIENT_DESIGN.md)。
+
 - [ ] 使用 Tauri v2 构建全平台超小体积安装包：
-  - macOS (`.dmg` / `.app` Universal, ~5MB)
+  - macOS (`.dmg` / `.app` Universal, ~4.5MB - 7.5MB)
   - Windows (`.msi` / `-setup.exe` WebView2, ~3MB)
   - Linux (`.AppImage` / `.deb`, ~6MB)
   - Android (`.apk` / `.aab`, ~8MB)
+- [ ] macOS 客户端实现沉浸式标题栏、顶部菜单栏 (`NSStatusItem`) 常驻、Keychain 令牌安全存储与原生零拷贝 BLAKE3 分片传输
 - [ ] Android 客户端增加相册后台增量备份（仅在连上 P2P 局域网或 Wi-Fi 时自动触发）
-- [ ] 桌面端增加本地 WebDAV 环回挂载，将远程 NAS 的私人盘与共享盘直接映射为本地系统盘符（Mac Finder / Windows 资源管理器直接读写）
+- [ ] 桌面端增加本地 WebDAV 环回挂载，将远程 NAS 的「私人空间」与「共享空间」直接映射为本地系统盘符（Mac Finder `/Volumes/MayaDesk` / Windows 资源管理器直接读写）
