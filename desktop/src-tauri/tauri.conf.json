@@ -10,14 +10,18 @@
     "frontendDist": "../../frontend/dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "MayaDesk — P2P 多盘 NAS 极速私有云",
-        "width": 1180,
-        "height": 760,
-        "minWidth": 900,
+        "width": 1220,
+        "height": 780,
+        "minWidth": 920,
         "minHeight": 600,
-        "resizable": true
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -34,6 +38,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "./Entitlements.plist",
+      "exceptionDomain": ""
+    },
     "android": {
       "minSdkVersion": 26
     }

@@ -46,6 +46,8 @@ pub struct FileQuery {
     pub token: Option<String>,
     #[serde(default)]
     pub inline: Option<bool>,
+    #[serde(default)]
+    pub channel: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -181,6 +183,28 @@ fn resolve_space(q_space: &Option<String>, q_pool: &Option<String>) -> String {
         }
     }
     "private".to_string()
+}
+
+fn extract_channel(headers: &HeaderMap, query_channel: Option<&str>, p2p_enabled: bool) -> String {
+    if let Some(ch) = headers.get("x-transport-channel").and_then(|v| v.to_str().ok()) {
+        if ch.contains("p2p") {
+            return "p2p".to_string();
+        } else if ch.contains("relay") || ch.contains("tunnel") {
+            return "relay".to_string();
+        }
+    }
+    if let Some(ch) = query_channel {
+        if ch.contains("p2p") {
+            return "p2p".to_string();
+        } else if ch.contains("relay") || ch.contains("tunnel") {
+            return "relay".to_string();
+        }
+    }
+    if p2p_enabled {
+        "p2p".to_string()
+    } else {
+        "relay".to_string()
+    }
 }
 
 fn extract_user(headers: &HeaderMap, secret: &str) -> UserClaims {
@@ -984,6 +1008,7 @@ async fn upload_file_handler(
         total_uploaded_bytes += data_len;
         let display_name = dest_file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
+        let tx_channel = extract_channel(&headers, q.channel.as_deref(), cfg.network.p2p_enabled);
         log_transfer(
             &state.db,
             &user.sub,
@@ -992,7 +1017,7 @@ async fn upload_file_handler(
             &display_name,
             &clean_path,
             data_len,
-            "relay",
+            &tx_channel,
             "success",
             None,
         ).await;
@@ -1168,6 +1193,7 @@ async fn upload_chunk_handler(
 
     let hash_hex = hasher.finalize().to_hex().to_string();
 
+    let tx_channel = extract_channel(&headers, None, cfg.network.p2p_enabled);
     log_transfer(
         &state.db,
         &user.sub,
@@ -1176,7 +1202,7 @@ async fn upload_chunk_handler(
         &file_name,
         &clean_rel,
         total_size,
-        "relay",
+        &tx_channel,
         "success",
         None,
     ).await;
@@ -1227,6 +1253,7 @@ async fn download_file_handler(
         })?;
 
         let zip_len = zip_bytes.len() as i64;
+        let tx_channel = extract_channel(&headers, q.channel.as_deref(), cfg.network.p2p_enabled);
         log_transfer(
             &state.db,
             &user.sub,
@@ -1235,7 +1262,7 @@ async fn download_file_handler(
             &format!("{}.zip", folder_name),
             &q.path,
             zip_len,
-            "relay",
+            &tx_channel,
             "success",
             None,
         ).await;
@@ -1311,6 +1338,7 @@ async fn download_file_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
 
     let file_len = bytes.len() as i64;
+    let tx_channel = extract_channel(&headers, q.channel.as_deref(), cfg.network.p2p_enabled);
     log_transfer(
         &state.db,
         &user.sub,
@@ -1319,7 +1347,7 @@ async fn download_file_handler(
         &file_name,
         &q.path,
         file_len,
-        "relay",
+        &tx_channel,
         "success",
         None,
     ).await;

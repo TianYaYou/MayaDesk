@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default macOS and desktop permissions for MayaDesk main workspace window","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","core:window:allow-toggle-maximize","core:window:allow-minimize","core:window:allow-hide","core:window:allow-show","core:window:allow-set-focus","core:window:allow-set-theme","core:app:allow-set-app-theme"]}}

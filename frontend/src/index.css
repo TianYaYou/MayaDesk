@@ -4,18 +4,344 @@
   box-sizing: border-box;
 }
 
+/* ============================================================================
+   Apple macOS Human Interface Guidelines (Sonoma / Sequoia) Design System
+   3 Appearance Modes: 'system' (Default, tracks OS), 'light' (Day), 'dark' (Night)
+   ============================================================================ */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --mac-bg-window: #ffffff;
+  --mac-bg-canvas: #f5f5f7;
+  --mac-bg-sidebar: #f2f2f5;
+  --mac-bg-toolbar: rgba(255, 255, 255, 0.88);
+  --mac-bg-card: #ffffff;
+  --mac-bg-group: #f7f7f9;
+  --mac-bg-elevated: #e8e8ed;
+  --mac-bg-input: #ffffff;
+  --mac-bg-hover: rgba(0, 0, 0, 0.045);
+  --mac-bg-active: rgba(0, 122, 255, 0.13);
+  --mac-sidebar-hover: rgba(0, 0, 0, 0.05);
+  --mac-sidebar-active: rgba(0, 0, 0, 0.09);
+  --mac-accent: #007aff;
+  --mac-accent-hover: #0062cc;
+  --mac-accent-subtle: rgba(0, 122, 255, 0.12);
+  --mac-accent-text: #0066cc;
+  --mac-text-primary: #1d1d1f;
+  --mac-text-secondary: #515154;
+  --mac-text-muted: #86868b;
+  --mac-border: rgba(0, 0, 0, 0.09);
+  --mac-border-strong: rgba(0, 0, 0, 0.15);
+  --mac-divider: rgba(0, 0, 0, 0.06);
+  --mac-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --mac-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  --mac-shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --mac-bg-window: #1e1e1e;
+  --mac-bg-canvas: #19191b;
+  --mac-bg-sidebar: #222225;
+  --mac-bg-toolbar: rgba(30, 30, 30, 0.88);
+  --mac-bg-card: #252528;
+  --mac-bg-group: #1f1f22;
+  --mac-bg-elevated: #323236;
+  --mac-bg-input: #1c1c1f;
+  --mac-bg-hover: rgba(255, 255, 255, 0.055);
+  --mac-bg-active: rgba(10, 132, 255, 0.22);
+  --mac-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --mac-sidebar-active: rgba(255, 255, 255, 0.12);
+  --mac-accent: #0a84ff;
+  --mac-accent-hover: #409cff;
+  --mac-accent-subtle: rgba(10, 132, 255, 0.18);
+  --mac-accent-text: #5eb0ff;
+  --mac-text-primary: #f5f5f7;
+  --mac-text-secondary: #a1a1a6;
+  --mac-text-muted: #6e6e73;
+  --mac-border: rgba(255, 255, 255, 0.10);
+  --mac-border-strong: rgba(255, 255, 255, 0.18);
+  --mac-divider: rgba(255, 255, 255, 0.07);
+  --mac-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --mac-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(255, 255, 255, 0.09);
+  --mac-shadow-modal: 0 28px 70px rgba(0, 0, 0, 0.65), 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background-color: #ffffff;
-  color: #000000;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background-color: var(--mac-bg-window);
+  color: var(--mac-text-primary);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 /* ============================================================================
-   Smooth Minimalist Flat Expand / Collapse & View Switching Animations
+   macOS Standard Components (Consistent 5px / 6px / 7px / 10px / 12px Radii)
    ============================================================================ */
 
-/* 1. CSS Grid 0fr -> 1fr Accordion Expand/Collapse */
+.mac-window {
+  background-color: var(--mac-bg-window);
+  color: var(--mac-text-primary);
+}
+
+.mac-sidebar {
+  background-color: var(--mac-bg-sidebar);
+  border-right: 1px solid var(--mac-border);
+}
+
+.mac-toolbar {
+  background-color: var(--mac-bg-toolbar);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--mac-border);
+}
+
+/* Sidebar Navigation Item (Borderless 6px rounded pill per Apple HIG) */
+.mac-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--mac-text-primary);
+  font-size: 12.5px;
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mac-nav-item:hover {
+  background-color: var(--mac-sidebar-hover);
+}
+
+.mac-nav-item.is-selected {
+  background-color: var(--mac-sidebar-active);
+  font-weight: 600;
+}
+
+/* macOS Standard Push Buttons (6px radius, strictly single-line nowrap) */
+.mac-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid var(--mac-border-strong);
+  background-color: var(--mac-bg-card);
+  color: var(--mac-text-primary);
+  box-shadow: var(--mac-shadow-sm);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.mac-btn:hover:not(:disabled) {
+  background-color: var(--mac-bg-hover);
+}
+
+.mac-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mac-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  background-color: var(--mac-accent);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.25);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.mac-btn-primary:hover:not(:disabled) {
+  background-color: var(--mac-accent-hover);
+}
+
+.mac-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mac-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mac-btn-ghost:hover:not(:disabled) {
+  background-color: var(--mac-bg-hover);
+  color: var(--mac-text-primary);
+}
+
+/* macOS Standard Inputs & Selects (6px radius) */
+.mac-input {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--mac-border-strong);
+  background-color: var(--mac-bg-input);
+  color: var(--mac-text-primary);
+  font-size: 12px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mac-input:focus {
+  outline: none;
+  border-color: var(--mac-accent);
+  box-shadow: 0 0 0 3px var(--mac-accent-subtle);
+}
+
+/* macOS Pill Badge / Breadcrumb Chip (5px radius, never wraps vertically) */
+.mac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background-color: var(--mac-bg-elevated);
+  color: var(--mac-text-secondary);
+}
+
+.mac-badge-accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background-color: var(--mac-accent-subtle);
+  color: var(--mac-accent-text);
+}
+
+/* macOS Segmented Control (System Settings Style) */
+.mac-segmented {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 7px;
+  background-color: var(--mac-bg-elevated);
+  border: 0.5px solid var(--mac-border);
+  flex-shrink: 0;
+}
+
+.mac-segmented-item {
+  border-radius: 5px;
+  border: none;
+  padding: 3.5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--mac-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.mac-segmented-item:hover {
+  color: var(--mac-text-primary);
+}
+
+.mac-segmented-item.is-active {
+  background-color: var(--mac-bg-card);
+  color: var(--mac-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* macOS System Settings Grouped Card (10px radius, does NOT block scroll containers) */
+.mac-card {
+  background-color: var(--mac-bg-card);
+  border-radius: 10px;
+  border: 1px solid var(--mac-border);
+  box-shadow: var(--mac-shadow-card);
+}
+
+.mac-scroll-area {
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mac-modal {
+  background-color: var(--mac-bg-card);
+  border-radius: 12px;
+  border: 1px solid var(--mac-border-strong);
+  box-shadow: var(--mac-shadow-modal);
+}
+
+/* macOS Finder Compact Table List */
+.mac-table-header {
+  background-color: var(--mac-bg-group);
+  border-bottom: 1px solid var(--mac-border);
+  color: var(--mac-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mac-table-row {
+  border-bottom: 1px solid var(--mac-divider);
+  white-space: nowrap;
+  transition: background-color 100ms ease;
+}
+
+.mac-table-row:last-child {
+  border-bottom: none;
+}
+
+.mac-table-row:hover {
+  background-color: var(--mac-bg-hover);
+}
+
+/* ============================================================================
+   Smooth Expand / Collapse & View Transitions
+   ============================================================================ */
+
 .md-collapse-grid {
   display: grid;
   grid-template-rows: 1fr;
@@ -36,7 +362,6 @@ body {
   min-height: 0;
 }
 
-/* 2. Individual Tree Node Smooth Expand/Collapse */
 .md-tree-node {
   display: grid;
   grid-template-rows: 1fr;
@@ -55,7 +380,6 @@ body {
   pointer-events: none;
 }
 
-/* 3. Rotating Chevron Indicator (▸ -> 90deg down) */
 .md-chevron {
   display: inline-flex;
   align-items: center;
@@ -68,11 +392,10 @@ body {
   transform: rotate(90deg);
 }
 
-/* 4. View / Directory / Space Switch Keyframe Animation */
 @keyframes mdViewEnter {
   0% {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(4px);
   }
   100% {
     opacity: 1;
@@ -81,13 +404,13 @@ body {
 }
 
 .md-view-animate {
-  animation: mdViewEnter 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: mdViewEnter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes mdRowEnter {
   0% {
     opacity: 0;
-    transform: translateX(-4px);
+    transform: translateX(-3px);
   }
   100% {
     opacity: 1;
@@ -96,10 +419,9 @@ body {
 }
 
 .md-row-animate {
-  animation: mdRowEnter 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: mdRowEnter 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 5. Modal Backdrop & Dialog Enter Animation */
 @keyframes mdBackdropFade {
   0% {
     opacity: 0;

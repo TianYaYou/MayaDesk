@@ -29,7 +29,7 @@ export interface DiskMountSummary {
 export interface VfsFileEntry {
   name: string;
   rel_path: string;
-  is_dir: boolean;
+  is_dir: bool | boolean;
   size_bytes: number;
   modified_unix: number;
   blake3_short: string | null;
@@ -115,10 +115,71 @@ export interface FullAppConfig {
   };
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+type bool = boolean;
+
+const SERVER_URL_STORAGE_KEY = 'mayadesk_server_url';
+const TRANSPORT_CHANNEL_STORAGE_KEY = 'mayadesk_transport_channel';
+
+export function getActiveTransportMode(): 'p2p' | 'relay' {
+  const saved = localStorage.getItem(TRANSPORT_CHANNEL_STORAGE_KEY);
+  if (saved && saved.includes('tunnel')) {
+    return 'relay';
+  }
+  return 'p2p';
+}
+
+export function setActiveTransportMode(channel: string): void {
+  localStorage.setItem(TRANSPORT_CHANNEL_STORAGE_KEY, channel);
+}
+
+export function getServerEndpointUrl(): string {
+  const saved = localStorage.getItem(SERVER_URL_STORAGE_KEY);
+  if (saved && saved.trim()) {
+    return saved.trim().replace(/\/+$/, '');
+  }
+  // Check macOS client config cached in localStorage as well so multi-window / Tauri never desyncs
+  try {
+    const macRaw = localStorage.getItem('mayadesk_macos_client_config');
+    if (macRaw) {
+      const parsed = JSON.parse(macRaw);
+      if (parsed?.server_url && typeof parsed.server_url === 'string') {
+        return parsed.server_url.trim().replace(/\/+$/, '');
+      }
+    }
+  } catch {
+    // ignore
+  }
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.protocol === 'tauri:' ||
+      window.location.hostname === 'tauri.localhost')
+  ) {
+    return 'http://127.0.0.1:8080';
+  }
+  return '';
+}
+
+export function setServerEndpointUrl(url: string): string {
+  const cleaned = url.trim().replace(/\/+$/, '').replace(/\/api\/v1$/, '');
+  if (!cleaned) {
+    localStorage.removeItem(SERVER_URL_STORAGE_KEY);
+    return '';
+  }
+  localStorage.setItem(SERVER_URL_STORAGE_KEY, cleaned);
+  return cleaned;
+}
+
+export function getApiBaseUrl(): string {
+  const envBase = import.meta.env.VITE_API_BASE_URL;
+  if (envBase) return envBase;
+  const endpoint = getServerEndpointUrl();
+  return endpoint ? `${endpoint}/api/v1` : '/api/v1';
+}
 
 function getAuthHeaders(token?: string | null): HeadersInit {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    'X-Transport-Channel': getActiveTransportMode(),
+  };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -126,7 +187,7 @@ function getAuthHeaders(token?: string | null): HeadersInit {
 }
 
 export async function apiLogin(email: string, password: string): Promise<AuthTokenResponse> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(`${getApiBaseUrl()}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -141,7 +202,7 @@ export async function apiRegister(
   password: string,
   displayName?: string
 ): Promise<AuthTokenResponse> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+  const res = await fetch(`${getApiBaseUrl()}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, display_name: displayName }),
@@ -152,21 +213,23 @@ export async function apiRegister(
 }
 
 export async function apiGetGoogleAuthUrl(): Promise<{ authorize_url: string; enabled: boolean }> {
-  const res = await fetch(`${API_BASE}/auth/google/url`);
+  const res = await fetch(`${getApiBaseUrl()}/auth/google/url`, { cache: 'no-store' });
   return res.json();
 }
 
 export async function apiGetUserProfile(token?: string | null): Promise<UserProfile> {
-  const res = await fetch(`${API_BASE}/user/profile`, {
+  const res = await fetch(`${getApiBaseUrl()}/user/profile`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error('无法读取用户信息');
   return res.json();
 }
 
 export async function apiListAdminUsers(token?: string | null): Promise<UserRecord[]> {
-  const res = await fetch(`${API_BASE}/admin/users`, {
+  const res = await fetch(`${getApiBaseUrl()}/admin/users`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error('无法读取用户列表');
   const data = await res.json();
@@ -178,7 +241,7 @@ export async function apiUpdateUserQuota(
   quotaBytes: number,
   token?: string | null
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/users/${userId}/quota`, {
+  const res = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/quota`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -196,7 +259,7 @@ export async function apiInitDisk(
   params: { mount_path: string; pool_type?: string; name?: string; quota_gb?: number },
   token?: string | null
 ): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/init-disk`, {
+  const res = await fetch(`${getApiBaseUrl()}/admin/init-disk`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -210,8 +273,9 @@ export async function apiInitDisk(
 }
 
 export async function apiListDisks(token?: string | null): Promise<DiskMountSummary[]> {
-  const res = await fetch(`${API_BASE}/disks`, {
+  const res = await fetch(`${getApiBaseUrl()}/disks`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error('无法加载磁盘挂载列表');
   const data = await res.json();
@@ -223,9 +287,10 @@ export async function apiListFiles(
   path: string,
   token?: string | null
 ): Promise<VfsFileEntry[]> {
-  const params = new URLSearchParams({ space, path });
-  const res = await fetch(`${API_BASE}/files?${params.toString()}`, {
+  const params = new URLSearchParams({ space, path, _t: String(Date.now()) });
+  const res = await fetch(`${getApiBaseUrl()}/files?${params.toString()}`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '无法读取目录');
@@ -236,9 +301,10 @@ export async function apiListFolderPaths(
   space: string,
   token?: string | null
 ): Promise<string[]> {
-  const params = new URLSearchParams({ space });
-  const res = await fetch(`${API_BASE}/files/folders?${params.toString()}`, {
+  const params = new URLSearchParams({ space, _t: String(Date.now()) });
+  const res = await fetch(`${getApiBaseUrl()}/files/folders?${params.toString()}`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   const data = await res.json();
   if (!res.ok) return ['/'];
@@ -251,7 +317,7 @@ export async function apiCreateFolder(
   folderName: string,
   token?: string | null
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/files/mkdir`, {
+  const res = await fetch(`${getApiBaseUrl()}/files/mkdir`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -273,8 +339,9 @@ export async function apiUploadFiles(
   onProgress?: (percent: number, msg: string) => void
 ): Promise<void> {
   const fileArray = Array.from(files);
-  const CHUNK_THRESHOLD = 8 * 1024 * 1024; // 8MB: files larger than this use chunked relay upload
+  const CHUNK_THRESHOLD = 4 * 1024 * 1024; // 4MB logical block boundary
   const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB per chunk
+  const modeLabel = getActiveTransportMode() === 'p2p' ? 'P2P 直连' : '中继';
 
   for (let fIdx = 0; fIdx < fileArray.length; fIdx++) {
     const file = fileArray[fIdx];
@@ -282,7 +349,6 @@ export async function apiUploadFiles(
     const progressBase = Math.round((fIdx / fileArray.length) * 100);
 
     if (file.size > CHUNK_THRESHOLD) {
-      // Large file: Chunked relay upload
       const uploadId = `up_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
@@ -304,10 +370,10 @@ export async function apiUploadFiles(
         const chunkPercent = Math.round(((cIdx + 1) / totalChunks) * 100);
         onProgress?.(
           Math.min(99, progressBase + Math.round(chunkPercent / fileArray.length)),
-          `正在中继上传大文件 "${file.name}" [分片 ${cIdx + 1}/${totalChunks}]`
+          `正在通过 ${modeLabel} 分片上传 "${file.name}" [${cIdx + 1}/${totalChunks}]`
         );
 
-        const res = await fetch(`${API_BASE}/files/upload/chunk`, {
+        const res = await fetch(`${getApiBaseUrl()}/files/upload/chunk`, {
           method: 'POST',
           headers: getAuthHeaders(token),
           body: form,
@@ -315,20 +381,23 @@ export async function apiUploadFiles(
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `大文件分片 ${cIdx + 1} 上传失败`);
+          throw new Error(errData.error || `分片 ${cIdx + 1} 上传失败`);
         }
       }
     } else {
-      // Standard upload (single or multiple)
       const form = new FormData();
       form.append('file', file, relPath);
-      const params = new URLSearchParams({ space, path });
+      const params = new URLSearchParams({
+        space,
+        path,
+        channel: getActiveTransportMode(),
+      });
       onProgress?.(
-        Math.min(99, progressBase + 10),
-        `正在上传 "${file.name}"...`
+        Math.min(99, progressBase + 15),
+        `正在通过 ${modeLabel} 上传 "${file.name}"...`
       );
 
-      const res = await fetch(`${API_BASE}/files/upload?${params.toString()}`, {
+      const res = await fetch(`${getApiBaseUrl()}/files/upload?${params.toString()}`, {
         method: 'POST',
         headers: getAuthHeaders(token),
         body: form,
@@ -350,7 +419,7 @@ export async function apiDeleteEntry(
   token?: string | null
 ): Promise<void> {
   const params = new URLSearchParams({ space, path });
-  const res = await fetch(`${API_BASE}/files?${params.toString()}`, {
+  const res = await fetch(`${getApiBaseUrl()}/files?${params.toString()}`, {
     method: 'DELETE',
     headers: getAuthHeaders(token),
   });
@@ -361,16 +430,25 @@ export async function apiDeleteEntry(
 }
 
 export function getDownloadUrl(space: string, path: string): string {
-  const params = new URLSearchParams({ space, path });
-  return `${API_BASE}/files/download?${params.toString()}`;
+  const params = new URLSearchParams({
+    space,
+    path,
+    channel: getActiveTransportMode(),
+  });
+  return `${getApiBaseUrl()}/files/download?${params.toString()}`;
 }
 
 export function getPreviewUrl(space: string, path: string, token?: string | null): string {
-  const params = new URLSearchParams({ space, path, inline: 'true' });
+  const params = new URLSearchParams({
+    space,
+    path,
+    inline: 'true',
+    channel: getActiveTransportMode(),
+  });
   if (token) {
     params.set('token', token);
   }
-  return `${API_BASE}/files/download?${params.toString()}`;
+  return `${getApiBaseUrl()}/files/download?${params.toString()}`;
 }
 
 export async function apiExtractArchive(
@@ -379,7 +457,7 @@ export async function apiExtractArchive(
   destPath?: string,
   token?: string | null
 ): Promise<{ status: string; file_name: string; dest_path: string; extracted_bytes: number; file_count: number }> {
-  const res = await fetch(`${API_BASE}/files/extract`, {
+  const res = await fetch(`${getApiBaseUrl()}/files/extract`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -431,8 +509,9 @@ export function getFileCategory(filename: string): 'image' | 'video' | 'audio' |
 }
 
 export async function apiGetTransferLogs(token?: string | null): Promise<TransferLogRecord[]> {
-  const res = await fetch(`${API_BASE}/transfers/logs`, {
+  const res = await fetch(`${getApiBaseUrl()}/transfers/logs?_t=${Date.now()}`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) return [];
   const data = await res.json();
@@ -440,8 +519,9 @@ export async function apiGetTransferLogs(token?: string | null): Promise<Transfe
 }
 
 export async function apiGetSystemConfig(token?: string | null): Promise<FullAppConfig> {
-  const res = await fetch(`${API_BASE}/config`, {
+  const res = await fetch(`${getApiBaseUrl()}/config`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error('无法读取系统配置');
   return res.json();
@@ -451,7 +531,7 @@ export async function apiSaveSystemConfig(
   cfg: FullAppConfig,
   token?: string | null
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/config`, {
+  const res = await fetch(`${getApiBaseUrl()}/config`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -488,8 +568,9 @@ export async function apiBrowseServerFs(
   token?: string | null
 ): Promise<FsBrowseResult> {
   const params = new URLSearchParams({ path });
-  const res = await fetch(`${API_BASE}/admin/fs/browse?${params.toString()}`, {
+  const res = await fetch(`${getApiBaseUrl()}/admin/fs/browse?${params.toString()}`, {
     headers: getAuthHeaders(token),
+    cache: 'no-store',
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -503,7 +584,7 @@ export async function apiCreateServerFsDir(
   folderName: string,
   token?: string | null
 ): Promise<{ status: string; path: string }> {
-  const res = await fetch(`${API_BASE}/admin/fs/mkdir`, {
+  const res = await fetch(`${getApiBaseUrl()}/admin/fs/mkdir`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -1,0 +1,14 @@
+{
+  "name": "mayadesk-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MayaDesk - P2P Multi-Disk NAS Cloud Drive with Cloudflare Tunnel fallback",
+  "scripts": {
+    "desktop:dev": "cd desktop && npx --prefix ../frontend tauri dev",
+    "desktop:build": "cd desktop && npx --prefix ../frontend tauri build",
+    "desktop:run": "./target/debug/mayadesk-client",
+    "web:dev": "npm --prefix frontend run dev",
+    "web:build": "npm --prefix frontend run build",
+    "server:dev": "cargo run -p mayadesk-server"
+  }
+}
